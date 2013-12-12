@@ -1,0 +1,1406 @@
+#!/usr/bin/env python
+
+import wx
+import wx.py
+import wx.stc
+
+import os, sys
+import subprocess
+import inspect
+import re
+
+from datetime import datetime
+
+SHOW_SCROLL = True
+
+# Special case to set up the search path if we're bundled into
+# an application (Mac OS X only)
+if '.app' in sys.argv[0]:
+    sys.path.append('')
+    APP_MODE = True
+    BUNDLED = True
+else:
+    APP_MODE = False
+    BUNDLED = False
+
+import cad_shapes
+import cad_text
+
+from Queue import Queue, Empty
+import threading
+
+full_image_size = 480
+small_image_size = 2 * full_image_size / 3
+
+image_size = full_image_size
+
+text_width = 480
+border = 3
+
+VERSION = '0.25'
+
+DARK_THEME = {
+'txt': [(wx.stc.STC_STYLE_DEFAULT,    '#000000', '#000000'),
+        (wx.stc.STC_STYLE_LINENUMBER, '#303030', '#c8c8c8'),
+        (wx.stc.STC_P_CHARACTER,      '#000000', '#ff73fd'),
+        (wx.stc.STC_P_CLASSNAME,      '#000000', '#96cbfe'),
+        (wx.stc.STC_P_COMMENTBLOCK,   '#000000', '#7f7f7f'),
+        (wx.stc.STC_P_COMMENTLINE,    '#000000', '#a8ff60'),
+        (wx.stc.STC_P_DEFAULT,        '#000000', '#ffffff'),
+        (wx.stc.STC_P_DEFNAME,        '#000000', '#96cbfe'),
+        (wx.stc.STC_P_IDENTIFIER,     '#000000', '#ffffff'),
+        (wx.stc.STC_P_NUMBER,         '#000000', '#ffffff'),
+        (wx.stc.STC_P_OPERATOR,       '#000000', '#ffffff'),
+        (wx.stc.STC_P_STRING,         '#000000', '#ff73fd'),
+        (wx.stc.STC_P_STRINGEOL,      '#000000', '#ffffff'),
+        (wx.stc.STC_P_TRIPLE,         '#000000', '#ff6c60'),
+        (wx.stc.STC_P_TRIPLEDOUBLE,   '#000000', '#96cbfe'),
+        (wx.stc.STC_P_WORD,           '#000000', '#b5dcff')],
+'background': '#252525',
+'foreground': '#c8c8c8'
+}
+
+LIGHT_THEME = {
+'txt': [(wx.stc.STC_STYLE_DEFAULT,    '#ffffff', '#ffffff'),
+        (wx.stc.STC_STYLE_LINENUMBER, '#c0c0c0', '#000000'),
+        (wx.stc.STC_P_CHARACTER,      '#ffffff', '#7f007f'),
+        (wx.stc.STC_P_CLASSNAME,      '#ffffff', '#0000ff'),
+        (wx.stc.STC_P_COMMENTBLOCK,   '#ffffff', '#7f7f7f'),
+        (wx.stc.STC_P_COMMENTLINE,    '#ffffff', '#007f00'),
+        (wx.stc.STC_P_DEFAULT,        '#ffffff', '#000000'),
+        (wx.stc.STC_P_DEFNAME,        '#ffffff', '#007f7f'),
+        (wx.stc.STC_P_IDENTIFIER,     '#ffffff', '#000000'),
+        (wx.stc.STC_P_NUMBER,         '#ffffff', '#000000'),
+        (wx.stc.STC_P_OPERATOR,       '#ffffff', '#000000'),
+        (wx.stc.STC_P_STRING,         '#ffffff', '#7f007f'),
+        (wx.stc.STC_P_STRINGEOL,      '#ffffff', '#000000'),
+        (wx.stc.STC_P_TRIPLE,         '#ffffff', '#7f0000'),
+        (wx.stc.STC_P_TRIPLEDOUBLE,   '#ffffff', '#000051'),
+        (wx.stc.STC_P_WORD,           '#ffffff', '#00007f')],
+'background': '#e0e0e0',
+'foreground': '#222222'
+}
+    
+def ApplyTheme(theme, txt, backgrounds, foregrounds):
+    for t in txt:
+        t.apply_theme(theme['txt'])
+    for b in backgrounds:
+        b(theme['background'])
+    for f in foregrounds:
+        f(theme['foreground'])
+    return theme
+
+class CadEditor(wx.py.editwindow.EditWindow):
+    def __init__(self, parent, size, style):
+        wx.py.editwindow.EditWindow.__init__(self, parent,
+                                             size=size, style=style)
+    
+    def apply_theme(self, theme):
+        for s in theme:
+            self.StyleSetBackground(s[0], s[1])
+            self.StyleSetForeground(s[0], s[2])
+
+################################################################################
+# LibraryFrame
+#   A simple read-only frame that displays the text from a given file.
+################################################################################
+class LibraryFrame(wx.Frame):
+    '''A simple text frame to display the contents of a standard libraries.'''
+    def __init__(self, title, filename, theme):
+        wx.Frame.__init__(self, None, title = title)
+
+        # Create text pane.
+        self.txt = CadEditor(self, size=(text_width, text_width),
+                                               style=wx.NO_BORDER)
+        if not SHOW_SCROLL:
+            self.txt.SetUseHorizontalScrollBar(False)
+            dummyScroll = wx.ScrollBar(self)
+            dummyScroll.Hide()
+            self.txt.SetVScrollBar(dummyScroll)
+        self.txt.SetCaretLineVisible(0)
+        
+        self.txt.ClearAll()
+        with open(filename.replace('pyc','py'), 'r') as f:
+            self.txt.SetText(f.read())
+        self.txt.SetSelection(0, 0)            
+        self.txt.SetReadOnly(True)
+        
+        ApplyTheme(theme, [self.txt], [self.SetBackgroundColour], [])
+
+        self.sizer = wx.BoxSizer(wx.VERTICAL)
+        self.sizer.Add(self.txt, 1, wx.EXPAND | wx.RIGHT | wx.TOP | wx.BOTTOM,
+                       border=border * 4)
+        self.SetSizerAndFit(self.sizer)
+        self.Show()
+
+################################################################################
+# Cadvars
+#   A class that represents a set of cad variables loaded from a .math file
+################################################################################
+class CadVars:
+   #
+   # cad variables
+   #
+   def __init__(self):
+      self.xmin = 0 # minimum x value to render
+      self.xmax = 0 # maximum x value to render
+      self.ymin = 0 # minimum y value to render
+      self.ymax = 0 # maximum y value to render
+      self.zmin = 0 # minimum z value to render
+      self.zmax = 0 # maximum z value to render
+      self.layers = [] # optional number of layers to render
+      self.function = '' # cad function
+      self.labels = [] # display labels
+      self.mm_per_unit = 1.0 # file units
+      self.type = '' # math string type
+
+################################################################################
+# ResolutionDialog
+#   A simple dialog box that lets the user set the resolution at which
+#   a cad file will be rendered to png.
+################################################################################
+class ResolutionDialog(wx.Dialog):
+    def __init__(self, parent, res):
+        wx.Dialog.__init__(self, parent = parent, title = 'Export')
+        self.value = wx.TextCtrl(self, -1, style=wx.TE_PROCESS_ENTER)
+        self.value.Bind(wx.EVT_TEXT, self.LimitToNumbers)
+        self.value.Bind(wx.EVT_TEXT_ENTER, self.Done)
+        self.value.ChangeValue(str(int(res)))
+        vbox = wx.BoxSizer(wx.VERTICAL)
+        
+        hbox = wx.BoxSizer(wx.HORIZONTAL)
+        hbox.Add(self.value, flag = wx.ALL, border=10)
+        okButton = wx.Button(self, label='OK')
+        okButton.Bind(wx.EVT_BUTTON, self.Done)
+        hbox.Add(okButton, flag = wx.ALL, border=10)
+        
+        vbox.Add(wx.StaticText(self, -1, 'Resolution (pixels/mm):'),
+                 flag = wx.LEFT | wx.TOP, border = 10)
+        vbox.Add(hbox)
+        
+        self.SetSizerAndFit(vbox)
+
+################################################################################
+
+    def LimitToNumbers(self, event):
+        value = self.value.GetValue()
+        i = self.value.GetInsertionPoint()
+        if value[i-1] in '0123456789.':
+            return
+        self.value.ChangeValue(value.replace(value[i-1],''))
+        self.value.SetInsertionPoint(i - 1)
+
+################################################################################
+
+    def Done(self, event):
+        self.EndModal(wx.ID_OK)
+        self.result = self.value.GetValue()
+        self.Destroy()
+
+##############################################################################
+
+class CadUIFrame(wx.Frame):
+    def __init__(self, Parent, title = 'cad_ui'):
+        wx.Frame.__init__(self, None, title = title)
+        
+        self.parent = Parent
+        self.backgrounds = [self.SetBackgroundColour]
+        self.foregrounds = []
+
+        imgpanel = self.CreateImagePanel()
+
+        self.CreateTextBox(textCallback      = Parent.OnText,
+                           isSavedCallback   = Parent.IsSaved,
+                           isUnsavedCallback = Parent.IsUnsaved)
+
+        self.CreateMenus(newCallback    = Parent.LoadTemplate,
+                         openCallback   = Parent.OnOpen,
+                         reloadCallback = Parent.ReloadFile,
+                         saveCallback   = Parent.OnSave,
+                         saveasCallback = Parent.OnSaveAs,
+                         exitCallback   = Parent.OnExit,
+                         renderCallback = Parent.Render,
+                         exportCallback = Parent.Export)
+                         
+        self.ArrangeGUI(self.txt, imgpanel)
+        self.ApplyTheme(DARK_THEME)
+        
+        self.Bind(wx.EVT_IDLE, lambda e: Parent.monitor_threads())
+
+################################################################################
+
+    def CreateTextBox(self, textCallback, isSavedCallback, isUnsavedCallback):
+        self.txt = CadEditor(self, size=(text_width, 0), style=wx.NO_BORDER)
+        # Set the margins on the text window:
+        #   2 with margin numbers
+        #   1 with symbols to indicate compile errors
+        #   3 just to add a bit of space
+        self.txt.SetMarginWidth(2, 16)
+        self.txt.SetMarginType(2,wx.stc.STC_MARGIN_NUMBER)
+        
+        self.txt.SetMarginWidth(1, 16)
+        self.txt.SetMarginType(1, wx.stc.STC_MARGIN_SYMBOL)
+        self.txt.MarkerDefine(0, wx.stc.STC_MARK_SHORTARROW, 'black','red')
+
+        self.txt.SetMarginWidth(3, 4)
+
+        self.txt.SetEOLMode(wx.stc.STC_EOL_LF)
+#        self.txt.SetViewEOL(True)
+
+        # Hide the scroll bars for visual cleanliness
+        if not SHOW_SCROLL:
+            self.txt.SetUseHorizontalScrollBar(False)
+            dummyScroll = wx.ScrollBar(self)
+            dummyScroll.Hide()
+            self.txt.SetVScrollBar(dummyScroll)
+
+        # Make the caret grey so that it works with both themes.
+        self.txt.SetCaretForeground('#888888')
+
+        # Bind callbacks to text events
+        self.txt.Bind(wx.stc.EVT_STC_CHANGE, textCallback)
+        self.txt.SetModEventMask(wx.stc.STC_MODEVENTMASKALL &                         
+                                ~wx.stc.STC_MOD_CHANGEMARKER &
+                                ~wx.stc.STC_MOD_CHANGESTYLE)
+        self.txt.Bind(wx.stc.EVT_STC_SAVEPOINTLEFT,    isUnsavedCallback)
+        self.txt.Bind(wx.stc.EVT_STC_SAVEPOINTREACHED, isSavedCallback)
+        
+        self.txt.Bind(wx.EVT_KEY_DOWN, self.HandleKey)
+        self.Bind(wx.EVT_KEY_DOWN, self.HandleKey)
+        self.txt.Bind(wx.EVT_KEY_UP, self.HandleKey)
+        self.txt.Bind(wx.EVT_KEY_UP, self.HandleKey)
+
+################################################################################
+
+    def CreateImagePanel(self):
+        # Create a nested panel to contain the image and a colorful border
+        centeringPanel = wx.Panel(self)
+        imgpanel = wx.Panel(centeringPanel)
+        
+        empty = wx.EmptyImage(image_size, image_size)
+        image = wx.StaticBitmap(imgpanel, -1, wx.BitmapFromImage(empty))
+        
+        imgsizer = wx.BoxSizer()
+        imgsizer.Add(image, 0, wx.ALL,
+                          border=border)
+        imgpanel.SetSizer(imgsizer)
+        
+        self.SetBorder = lambda color: [imgpanel.SetBackgroundColour(color),
+                                        imgpanel.Refresh()]
+
+        self.SetImage = lambda bitmap: [image.SetBitmap(bitmap),
+                                        self.Layout()]
+
+        # Create text pane.
+        self.outputTxt = CadEditor(centeringPanel, size=(image_size + border * 12,
+                                                         image_size/4),
+                                   style=wx.NO_BORDER)
+        if not SHOW_SCROLL:
+            self.outputTxt.SetUseHorizontalScrollBar(False)
+            dummyScroll = wx.ScrollBar(self)
+            dummyScroll.Hide()
+            self.outputTxt.SetVScrollBar(dummyScroll)
+        self.outputTxt.SetReadOnly(True)
+        self.outputTxt.SetCaretLineVisible(0)
+        self.outputTxt.Hide()
+        
+        # Create nested horizontal and vertical centering sizers
+        vcenter = wx.BoxSizer(wx.VERTICAL)
+        vcenter.Add((0,0), 1)
+        vcenter.Add(imgpanel, 0, wx.LEFT | wx.RIGHT | wx.CENTER, border = 5 * border)
+        statusText = wx.StaticText(centeringPanel)
+        vcenter.Add(statusText, 0, wx.LEFT, border = 5 * border)
+        vcenter.Add((0,0), 1)
+        vcenter.Add(self.outputTxt, 25, wx.TOP | wx.EXPAND, border = 5 * border)
+        
+        hcenter = wx.BoxSizer(wx.HORIZONTAL)
+        hcenter.Add((0,0), 1)
+        hcenter.Add(vcenter, 0, wx.CENTER | wx.EXPAND),
+        hcenter.Add((0,0), 1)
+        centeringPanel.SetSizer(hcenter)
+         
+        self.SetStatus = lambda h: statusText.SetLabel(h)
+
+        self.backgrounds += [imgpanel.SetBackgroundColour,
+		             centeringPanel.SetBackgroundColour]
+        self.foregrounds += [statusText.SetForegroundColour]
+        
+        return centeringPanel
+
+################################################################################
+
+    def CreateMenus(self,                  newCallback = None,
+                    openCallback   = None, reloadCallback = None,
+                    saveCallback   = None, saveasCallback = None,
+                    exitCallback   = None, renderCallback = None,
+                    exportCallback = None):
+                    
+        menu = wx.Menu()
+        
+        new = menu.Append(wx.ID_NEW, 'New\tCtrl+N', 'Start a new cad file')
+        self.Bind(wx.EVT_MENU, newCallback, new)
+        
+        about = menu.Append(wx.ID_ABOUT, 'About',
+                            'Display information about cad_ui')
+        self.Bind(wx.EVT_MENU, self.AboutBox, about)
+                              
+        open = menu.Append(wx.ID_OPEN, 'Open\tCtrl+O', "Open a cad file")
+        self.Bind(wx.EVT_MENU, openCallback, open)
+        
+        reload = menu.Append(-1, 'Reload\tCtrl+R','Reload the current file')
+        self.Bind(wx.EVT_MENU, reloadCallback, reload)
+        
+        save = menu.Append(wx.ID_SAVE, 'Save\tCtrl+S', "Save the current file")
+        self.Bind(wx.EVT_MENU, saveCallback, save)
+        
+        saveas = menu.Append(wx.ID_SAVEAS, 'Save As\tCtrl+Shift+S', "Save the current file")
+        self.Bind(wx.EVT_MENU, saveasCallback, saveas)
+        
+        exit = menu.Append(wx.ID_EXIT,'Exit\tCtrl+Q',"Terminate the program")
+        self.Bind(wx.EVT_MENU, exitCallback, exit)
+        self.Bind(wx.EVT_CLOSE, exitCallback)
+        
+        settingsMenu = wx.Menu()
+        self.Bind(wx.EVT_MENU, renderCallback,
+                  settingsMenu.Append(-1, 'Render\tCtrl+Enter',
+                  "Render the current .cad file to the preview pane")
+                  )
+        self.auto = settingsMenu.AppendCheckItem(-1, 'Auto-render',
+            "Re-render whenever the cad file changes")
+        self.Bind(wx.EVT_MENU, renderCallback, self.auto)
+        self.auto.Check(True)
+
+        # Menu to change view options
+        viewMenu = wx.Menu()
+        self.fullScreen = viewMenu.AppendCheckItem(-1, 'Full screen\tCtrl+Shift+F',
+            'Expand window and activate full screen mode.')
+        self.Bind(wx.EVT_MENU, lambda e: self.ShowFullScreen(e.Checked()),
+                  self.fullScreen)
+        output = viewMenu.AppendCheckItem(-1, 'Show errors\tCtrl+E',
+                                          'Show errors messages in a separate pane.')
+        self.Bind(wx.EVT_MENU, self.ShowOutput, output)
+        
+        themeMenu = wx.Menu()
+        viewMenu.AppendSubMenu(themeMenu, 'Theme')
+        
+        light = themeMenu.AppendRadioItem(-1, 'Light')
+        self.Bind(wx.EVT_MENU, lambda e: self.ApplyTheme(LIGHT_THEME), light)
+
+        dark = themeMenu.AppendRadioItem(-1, 'Dark')
+        self.Bind(wx.EVT_MENU, lambda e: self.ApplyTheme(DARK_THEME), dark)
+
+        # Default theme is dark
+        dark.Check(True)
+
+        libraryMenu = wx.Menu()
+        show_cad_shapes = lambda e: LibraryFrame('cad_shapes',
+                                                 cad_shapes.__file__,
+                                                 self.theme)
+        self.Bind(wx.EVT_MENU, show_cad_shapes,
+                  libraryMenu.Append(-1, 'cad_shapes','View the standard shapes library'))
+                  
+        show_cad_text = lambda e: LibraryFrame('cad_text',
+                                               cad_text.__file__,
+                                               self.theme)
+        self.Bind(wx.EVT_MENU, show_cad_text,
+                  libraryMenu.Append(-1, 'cad_text','View the standard text library'))
+
+        exportMenu = wx.Menu()
+        self.Bind(wx.EVT_MENU, lambda e: exportCallback('math'),
+                  exportMenu.Append(-1, '.math','Export to .math file'))
+        self.Bind(wx.EVT_MENU, lambda e: exportCallback('png'),
+                  exportMenu.Append(-1, '.png','Export to image file'))
+        self.Bind(wx.EVT_MENU, lambda e: exportCallback('svg'),
+                  exportMenu.Append(-1, '.svg','Export to svg file'))
+        self.Bind(wx.EVT_MENU, lambda e: exportCallback('stl'),
+                  exportMenu.Append(-1, '.stl','Export to stl file'))
+        self.Bind(wx.EVT_MENU, lambda e: exportCallback('dot'),
+                  exportMenu.Append(-1, '.dot','Export to dot / Graphviz file'))
+                  
+        menuBar = wx.MenuBar()
+        menuBar.Append(menu, 'File')
+        menuBar.Append(viewMenu, 'View')
+        menuBar.Append(settingsMenu, 'Options')
+        menuBar.Append(libraryMenu, 'Libraries')
+        menuBar.Append(exportMenu, 'Export')
+
+        self.Bind(wx.EVT_MENU_HIGHLIGHT, self.OnMenuHighlight)
+        self.Bind(wx.EVT_MENU_CLOSE, self.OnMenuClose)
+        self.Bind(wx.EVT_MENU_OPEN, self.OnMenuOpen)
+        
+        self.SetMenuBar(menuBar)
+        
+################################################################################
+
+    def ArrangeGUI(self, txt, img):
+        self.sizer = wx.FlexGridSizer(rows = 3, cols = 2)
+        self.sizer.AddGrowableCol(0, 1)
+        self.sizer.AddGrowableRow(1, 1)
+        
+        self.sizer.Add((0, 0)) # Add a dummy widget to the top left corner
+        
+        # Create and add version text
+        versionText = wx.StaticText(self, -1, 'cad_ui %s' % VERSION)
+        self.foregrounds += [versionText.SetForegroundColour]        
+        
+        self.sizer.Add(versionText, 0, wx.ALIGN_RIGHT)
+        self.sizer.Add(txt, 0, wx.EXPAND)
+        self.sizer.Add(img, 0, wx.EXPAND)
+        
+        # Create and add syntax hint
+        syntaxHint = wx.StaticText(self)
+        self.foregrounds += [syntaxHint.SetForegroundColour]
+        
+        self.sizer.Add(syntaxHint)
+        self.SetHint = lambda h: syntaxHint.SetLabel(h)
+        
+        # Fit everything into the sizer
+        self.SetSizerAndFit(self.sizer)
+
+################################################################################
+
+    def ApplyTheme(self, theme):
+        self.theme = ApplyTheme(theme, [self.txt, self.outputTxt],
+                                self.backgrounds, self.foregrounds)
+
+################################################################################
+
+    def HandleKey(self, e):
+        try:
+            control = wx.WXK_RAW_CONTROL
+        except:
+            control = wx.WXK_CONTROL
+
+        if e.GetKeyCode() == wx.WXK_ESCAPE and \
+           e.GetEventType() == wx.EVT_KEY_DOWN.typeId:
+            self.ShowFullScreen(False)
+            self.fullScreen.Check(False)
+            
+        # Highlighting is not available in the revised solver.
+#         elif e.GetKeyCode() == control and \
+#              e.GetEventType() == wx.EVT_KEY_DOWN.typeId and\
+#              self.parent.cad.type == "Boolean":
+#             self.parent.Render(highlight = True)
+#         elif e.GetKeyCode() == control and \
+#              e.GetEventType() == wx.EVT_KEY_UP.typeId and\
+#              self.parent.cad.type == "Highlight":
+#              self.parent.Render()         
+             
+        else:
+            if e.GetEventType() == wx.EVT_KEY_DOWN:
+                self.SetHint('')
+            e.Skip()
+###############################################################################
+    def ShowOutput(self, e):
+        global image_size
+        if type(e) is bool:
+            show = e
+        else:
+            show = e.Checked()
+        if e.Checked():
+            self.outputTxt.Show()
+            if image_size != small_image_size:
+                image_size = small_image_size
+                empty = wx.EmptyImage(image_size, image_size)
+                self.SetImage(wx.BitmapFromImage(empty))
+                self.parent.Render()
+        else:
+            self.outputTxt.Hide()
+            if image_size != full_image_size:
+                image_size = full_image_size
+                empty = wx.EmptyImage(image_size, image_size)
+                self.SetImage(wx.BitmapFromImage(empty))
+                self.parent.Render()
+
+        self.Layout()
+
+###############################################################################
+                                    
+    def AboutBox(self, e = None):
+        info = wx.AboutDialogInfo()
+        info.SetName("cad_ui")
+        if APP_MODE:
+            info.SetIcon(wx.Icon('cba_icon.png', wx.BITMAP_TYPE_PNG))
+        info.SetVersion(VERSION)
+        info.SetDescription('A design tool for .cad files.')
+        info.SetWebSite('http://kokompe.cba.mit.edu')
+        info.SetCopyright('(C) 2012 Matthew Keeter')
+        wx.AboutBox(info)
+
+###############################################################################
+
+    def OnMenuHighlight(self, event):
+        # Show how to get menu item info from this event handler
+        id = event.GetMenuId()
+        item = self.GetMenuBar().FindItemById(id)
+        if not item or not item.GetHelp():
+            self.SetHint('')
+        else:
+            self.SetHint(item.GetHelp())
+#        print "highlight"
+    
+    def OnMenuClose(self, event):
+#        print "close"
+        self.SetHint('')
+    
+    def OnMenuOpen(self, event):
+#        print "Open"
+        pass
+         
+###############################################################################
+
+    def SetText(self, text):
+        self.txt.ClearAll()
+        self.txt.SetText(text)
+        self.txt.SetSelection(0, 0)
+
+    def SetOutput(self, text):
+        self.outputTxt.SetReadOnly(False)
+        self.outputTxt.ClearAll()
+        self.outputTxt.SetText(text)
+        self.outputTxt.SetSelection(0, 0)
+        self.outputTxt.SetReadOnly(True)
+
+###############################################################################
+
+    def GetText(self):
+        return self.txt.GetText()
+
+###############################################################################
+
+    def BindTimer(self, callback, time = 10):
+        self.timer = wx.Timer(self, -1)
+        self.Bind(wx.EVT_TIMER, callback, self.timer)
+        self.timer.Start(time)
+
+###############################################################################
+
+    def MarkError(self, line):
+        self.txt.MarkerAdd(line, 0)
+    
+###############################################################################
+
+    def ClearError(self):
+        self.txt.MarkerDeleteAll(0)
+
+###############################################################################
+
+    def SyntaxHelper(self):
+        self.SetHint('')
+        
+        c = self.txt.GetCurLine()
+        before = c[0][:c[1] + 1]
+        if not before:
+            return
+        
+        # Try to grab a token being typed.
+        i = len(before) - 1        
+        while i >= 0 and before[i:].replace('_','a').isalnum():
+            i -= 1
+        token = before[i+1:]
+        
+        matches = []
+        for op in dir(cad_shapes):
+            if token and op.startswith(token) \
+                     and callable(eval("cad_shapes." + op)):
+                matches += [(op, 'cad_shapes.')]
+        for op in dir(cad_text):
+            if token and op.startswith(token) \
+                     and callable(eval("cad_text." + op)):
+                matches += [(op, 'cad_text.')]
+        
+        # Otherwise, try to get the name of the outermost function
+        if not matches:
+            openParens = len(before) - 1
+            depth = 0
+            while openParens >= 0:
+                if before[openParens] == '(':
+                    if depth == 0:
+                        break
+                    else:
+                        depth -= 1
+                elif before[openParens] == ')':
+                    depth += 1
+                openParens -= 1
+                
+            if openParens == -1:
+                return
+            before = before[:openParens]
+    
+            # Extract the name
+            i = len(before) - 1        
+            while i >= 0 and before[i:].replace('_','a').isalnum():
+                i -= 1
+            token = before[i+1:]
+
+            for op in dir(cad_shapes):
+                if token and op.startswith(token) \
+                         and callable(eval("cad_shapes." + op)):
+                    matches += [(op, 'cad_shapes.')]
+            for op in dir(cad_text):
+                if token and op.startswith(token) \
+                         and callable(eval("cad_text." + op)):
+                    matches += [(op, 'cad_text.')]
+                    
+            if not matches:
+                return
+
+        # Pick the match with the largest fraction of matching characters
+        best_score = 0
+        match = ''
+        print matches
+        for m in matches:
+            score = min(len(m), len(token)) / float(max(len(m), len(token)))
+            if  score > best_score:
+                best_score = score
+                match = m
+        try:
+            args = inspect.getargspec(eval(match[1] + match[0])).args
+            self.SetHint(match[0] + '(' + ', '.join(args) + ')')
+        except TypeError:
+            pass
+
+###############################################################################
+# CadUIApp
+#   The class that actually runs everything.
+###############################################################################
+
+class CadUIApp(wx.App):
+    def OnInit(self):
+        self.frame = CadUIFrame(self)
+        self.frame.Show()
+        self.image = wx.EmptyImage(image_size, image_size)
+        
+        self.threads = []
+        self.export = False
+        
+        self.saved = True
+        
+        # Either load a file from the first command-line argument, or open
+        # a template
+        if len(sys.argv) != 2:
+            self.LoadTemplate()
+        else:
+            try:
+                if len(sys.argv) == 2:
+                    if os.path.isabs(sys.argv[1]):
+                        filename = sys.argv[1]
+                    else:
+                        filename = os.path.join(os.getcwd(), sys.argv[1])
+                    print filename
+                    self.SetFilename(os.path.split(filename)[0],
+                                     os.path.split(filename)[1])
+                self.LoadFile()
+            except:
+                self.LoadTemplate()
+                self.SetFilename(os.path.split(filename)[0],
+                                 os.path.split(filename)[1])
+                self.OnSave()
+        
+        self.cad = CadVars()
+        self.resolution = 0
+        
+        return True
+    
+    def LoadTemplate(self, e = None):
+        if not self.WarnChanges():
+            return
+            
+        self.SetFilename('','')
+        
+        self.frame.SetText('''from cad_shapes import *
+
+# Render boundaries
+cad.xmin = -1
+cad.xmax = 1
+cad.ymin = -1
+cad.ymax = 1
+cad.mm_per_unit = 25.4 # inch units
+
+cad.function = circle(0, 0, 0.5)''')
+        self.frame.txt.SetSavePoint()
+        self.IsSaved()
+    
+    def IsSaved(self, e = None):
+        self.saved = True
+        self.UpdateTitle()
+    
+    def IsUnsaved(self, e = None):
+        self.saved = False
+        self.UpdateTitle()
+    
+    
+    def OnSave(self, e = None):
+        if self.cadFilePath:
+            with open(self.cadFilePath, 'w') as f:
+                f.write(self.frame.txt.GetText())
+            self.IsSaved()
+            self.frame.txt.SetSavePoint()
+        else:
+            self.OnSaveAs()
+        
+    def OnSaveAs(self, e = None):
+        directory = self.cadFileDir if self.cadFileDir else os.getcwd()
+        dlg = wx.FileDialog(self.frame, "Choose a file",
+                            directory, '', '*.*', wx.SAVE)
+        if dlg.ShowModal() == wx.ID_OK:
+            filename = dlg.GetFilename()
+            # Automatically append a .cad extension to the filename
+            if filename[-4:] != '.cad':
+                filename += '.cad'
+            self.SetFilename(dlg.GetDirectory(), filename)
+            self.OnSave()
+        dlg.Destroy()
+    
+    def Export(self, target):
+        # Pick png/svg/stl resolution
+        if target in ['png', 'svg', 'stl']:
+            dlg = ResolutionDialog(self.frame, self.resolution)
+            result = dlg.ShowModal()
+            dlg.Destroy()
+            if result == wx.ID_OK:
+                resolution = dlg.result
+            else:
+                return
+            
+        # Pick new filename
+        directory = self.cadFileDir if self.cadFileDir else os.getcwd()
+        dlg = wx.FileDialog(self.frame, '', directory,
+                            '', '*.*',wx.SAVE)
+        if dlg.ShowModal() == wx.ID_OK:
+            filename = dlg.GetFilename()
+            directory = dlg.GetDirectory()    
+            path = os.path.join(directory, filename)
+            
+            if target == 'math':
+                self.start_thread(self.export_math, (path,))
+            elif target == 'dot':
+                self.start_thread(self.export_dot, (path,))
+            elif target == 'png':
+                self.start_thread(self.export_png, (resolution,path))
+            elif target == 'svg':
+                self.start_thread(self.export_svg, (resolution,path))
+            elif target == 'stl':
+                self.start_thread(self.export_stl, (resolution,path))
+            
+        dlg.Destroy()
+    
+    def LoadImage(self, imageName):
+        '''Loads an image from a file and puts it into the UI.'''
+        self.image = wx.Image(imageName)
+        self.bitmap = wx.BitmapFromImage(self.image)
+            
+        self.frame.SetImage(self.bitmap)
+        
+    
+    def SetFilename(self, directory, name):
+        '''Given a directory and filename, set internal variables that describe
+           our output/input targets.  Also, clear state variables to mark that this
+           is the first time we've run this file.
+        '''
+        self.cadFileDir = directory
+        self.cadFilePath = os.path.join(self.cadFileDir, name)
+        
+        self.cad = CadVars()
+        
+    def OnOpen(self, e = None):
+        '''Callback for the open file dialog box.  Saves the name
+           of the opened file and generates .math and .png names.'''
+
+        if not self.WarnChanges():
+            return
+
+        directory = self.cadFileDir if self.cadFileDir else os.getcwd()
+        dlg = wx.FileDialog(self.frame, "Choose a file",
+                            directory, '', '*.*', wx.OPEN)
+        result = dlg.ShowModal()
+        dlg.Destroy()
+        if result != wx.ID_OK:
+            return
+        
+        self.SetFilename(dlg.GetDirectory(), dlg.GetFilename())
+        self.LoadFile()
+    
+    def ReloadFile(self, e = None):
+        if self.cadFilePath == '':
+            return
+            
+        if not self.WarnChanges():
+            return
+        
+        self.LoadFile(reset = False)
+    
+    def LoadFile(self, reset = True):
+        with open(self.cadFilePath, 'r') as f:
+            text = f.read()
+
+        if reset:
+            self.frame.auto.Check(True)
+        
+        self.frame.SetText(text)
+        self.frame.txt.SetSavePoint()
+
+        self.IsSaved()
+
+    def UpdateTitle(self):
+        if not self.cadFilePath:
+            s = 'cad_ui:  [Untitled]'
+        else:
+            s = 'cad_ui:  ' + self.cadFilePath
+
+        if self.saved:
+            self.frame.SetTitle(s)
+        else:
+            self.frame.SetTitle(s + '*')
+    
+    def OnText(self, event):
+        self.frame.SyntaxHelper()
+            
+        # If auto-render is enabled, then render the image
+        # (unless we're currently exporting something)
+        if self.frame.auto.IsChecked() and not self.export:
+            self.Render()
+        else:
+            self.frame.SetBorder((100, 100, 100))
+
+    def WarnChanges(self):
+        '''Check to see if the user is ok with abandoning unsaved changes.
+           Returns True if we should proceed.'''
+        if self.saved:
+            return True
+
+        dlg = wx.MessageDialog(None, "All unsaved changes will be lost.",
+                               "Warning:",
+                               wx.OK | wx.CANCEL | wx.ICON_EXCLAMATION)
+        result = dlg.ShowModal()
+        dlg.Destroy()
+        return result == wx.ID_OK
+   
+    def OnExit(self, event = None):
+        if event is None:
+            return
+        if self.WarnChanges():
+            self.frame.Destroy()
+
+    def GetCadVars(self):
+        self.cad = CadVars()
+
+        f = open('_cad_ui_tmp.math')
+        for line in f:
+            if 'format:' in line:
+                self.cad.type = line[8:]
+            elif 'mm per unit:' in line:
+                self.cad.mm_per_unit = float(line[12:])
+            elif 'dx dy dz:' in line:
+                [dx, dy, dz] = [float(v) for v in line[10:].split(' ')]
+            elif 'xmin ymin zmin:' in line:
+                [self.cad.xmin,
+                 self.cad.ymin,
+                 self.cad.zmin] = [float(v) for v in line[16:].split(' ')]
+
+        self.cad.xmax = self.cad.xmin + dx
+        self.cad.ymax = self.cad.ymin + dy
+        self.cad.zmax = self.cad.zmin + dz
+        f.close()
+   
+    def get_resolution(self, size = None):
+        '''Calculates the desired resolution based on the .math file.'''
+        if not size:
+            size = image_size
+        self.GetCadVars()
+
+        dx = self.cad.xmax - self.cad.xmin
+        dy = self.cad.ymax - self.cad.ymin
+        side = max(dx, dy)
+        self.resolution = size / (self.cad.mm_per_unit * side)
+        return self.resolution
+
+################################################################################
+    
+    def start_thread(self, callable, args=()):
+        e = threading.Event()
+        t = threading.Thread(target=callable, args=args, kwargs={'event':e})
+        t.daemon = True
+        t.start()
+        self.threads += [(t, e)]
+    
+    def monitor_threads(self):
+        ''' Monitor the list of active threads, joining those that are dead.
+        
+            This function runs in the wx IDLE callback, so it is continuously
+            checking in the background.
+        '''
+        dead_threads = filter(lambda (thread, event): not thread.is_alive(),
+                              self.threads)
+                              
+        for thread, event in dead_threads:
+            thread.join()
+        
+        self.threads = filter(lambda t: t not in dead_threads, self.threads)
+        
+    def stop_threads(self):
+        ''' Tells all threads to stop at their earliest convenience.
+        '''
+        for thread, event in self.threads:
+            event.set()
+        print ''
+################################################################################
+
+    def export_math(self, filename, event = threading.Event()):
+        '''Exports a .math file.
+        
+           Updates the UI in case of success.
+        '''
+        self.export = True
+        
+        print "####    Exporting .math file    ####"
+        wx.CallAfter(self.frame.ClearError)
+        wx.CallAfter(self.frame.SetBorder, (255, 165, 0))
+        wx.CallAfter(self.frame.SetOutput, "\n\tNo errors")
+        wx.CallAfter(self.frame.SetStatus,
+                     "Converting to math string (.math export)")
+        cm = self.cad_math(filename, event)
+
+        if cm is True: # Program succeeded
+            wx.CallAfter(self.frame.SetBorder, (0, 255, 0))
+            wx.CallAfter(self.frame.SetStatus,
+                         ".math export complete")
+        self.export = False
+
+################################################################################
+
+    def export_png(self, resolution, filename, event = threading.Event()):
+        '''Exports a .png file.
+        
+           Updates the UI in case of success.
+        '''
+        self.export = True
+        
+        print "####    Exporting .png file     ####"
+        wx.CallAfter(self.frame.ClearError)
+        wx.CallAfter(self.frame.SetBorder, (255, 165, 0))
+        wx.CallAfter(self.frame.SetOutput, "\n\tNo errors")
+        wx.CallAfter(self.frame.SetStatus,
+                     "Converting to math string (.png export)")
+        
+        # Save math file with default filename
+        if not self.cad_math(event=event):
+            self.export = False
+            return
+                
+        # Call math_png
+        mp = self.math_png(resolution, filename, event, incremental = False)
+        
+        if mp is True:
+            wx.CallAfter(self.frame.SetBorder, (0, 255, 0))
+            wx.CallAfter(self.frame.SetStatus,
+                         ".png export complete") 
+        self.export = False
+
+################################################################################
+
+    def export_stl(self, resolution, filename, event = threading.Event()):
+        '''Exports a .stl file.
+        
+           Updates the UI in case of success.
+        '''
+        self.export = True
+        
+        print "####    Exporting .stl file     ####"
+        wx.CallAfter(self.frame.ClearError)
+        wx.CallAfter(self.frame.SetBorder, (255, 165, 0))
+        wx.CallAfter(self.frame.SetOutput, "\n\tNo errors")
+        wx.CallAfter(self.frame.SetStatus,
+                     "Converting to math string (.stl export)")
+        
+        # Save math file with default filename
+        if not self.cad_math(event=event):
+            self.export = False
+            return
+                
+        # Call math_stl
+        mp = self.math_stl(resolution, filename, event)
+        
+        if mp is True:
+            wx.CallAfter(self.frame.SetBorder, (0, 255, 0))
+            wx.CallAfter(self.frame.SetStatus,
+                         ".stl export complete") 
+                         
+        self.export = False
+                         
+################################################################################
+
+    def export_svg(self, resolution, filename, event = threading.Event()):
+        '''Exports a .svg file.
+        
+           Updates the UI in case of success.
+        '''
+        self.export = True
+        
+        print "####    Exporting .svg file     ####"
+        wx.CallAfter(self.frame.ClearError)
+        wx.CallAfter(self.frame.SetBorder, (255, 165, 0))
+        wx.CallAfter(self.frame.SetOutput, "\n\tNo errors")
+        wx.CallAfter(self.frame.SetStatus,
+                     "Converting to math string (.svg export)")
+        
+        # Save math file with default filename
+        if not self.cad_math(event=event):
+            self.export = False
+            return
+                
+        # Call math_svg
+        mp = self.math_svg(resolution, filename, event)
+        
+        if mp is True:
+            wx.CallAfter(self.frame.SetBorder, (0, 255, 0))
+            wx.CallAfter(self.frame.SetStatus,
+                         ".svg export complete") 
+                         
+        self.export = False
+################################################################################
+
+    def export_dot(self, filename, event = threading.Event()):
+        '''Exports a .dot file.
+        
+           Updates the UI in case of success.
+        '''
+        self.export = True
+        
+        print "####    Exporting .dot file     ####"
+        wx.CallAfter(self.frame.ClearError)
+        wx.CallAfter(self.frame.SetBorder, (255, 165, 0))
+        wx.CallAfter(self.frame.SetOutput, "\n\tNo errors")
+        wx.CallAfter(self.frame.SetStatus,
+                     "Converting to math string (.dot export)")
+        
+        # Save math file with default filename
+        if not self.cad_math(event=event):
+            self.export = False
+            return
+                
+        # Call math_dot
+        mp = self.math_dot(filename, event)
+        
+        if mp is True:
+            wx.CallAfter(self.frame.SetBorder, (0, 255, 0))
+            wx.CallAfter(self.frame.SetStatus,
+                         ".dot export complete") 
+        self.export = False
+################################################################################
+
+    def render(self, event = threading.Event()):
+        ''' Renders an image and loads it in the display panel.
+        
+            This function should be called in an independent thread.
+        '''
+        now = datetime.now()
+        print "####       Rendering image      ####"
+        wx.CallAfter(self.frame.ClearError)
+        wx.CallAfter(self.frame.SetBorder, (255, 165, 0))
+        wx.CallAfter(self.frame.SetOutput, "\n\tNo errors")
+        wx.CallAfter(self.frame.SetStatus,
+                     "Converting to math string")
+        
+        # Save math file with default filename
+        if not self.cad_math(event=event):
+            return
+    
+        # Extract the resolution from the .math file
+        resolution = self.get_resolution()
+        
+        # Call math_png.  If it fails, then return early.
+        if self.math_png(resolution, event=event) is not True:
+            return
+            
+        wx.CallAfter(self.frame.SetBorder, (0, 255, 0))
+        wx.CallAfter(self.LoadImage, '_cad_ui_tmp.png')
+        wx.CallAfter(os.remove, '_cad_ui_tmp.png')
+        wx.CallAfter(self.frame.SetStatus, "")
+        print "Time taken: ", datetime.now() - now
+        
+################################################################################
+
+    def cad_math(self, filename = None, event = threading.Event()):
+        '''Runs cad_math.  This should be started in a separate thread.
+        
+           Returns None if interrupted, False if failed, True if success.
+           In case of failure, updates UI accordingly.
+           
+           Deletes the source .cad file on success.
+           
+        '''
+    
+        # Dump the contents of the text box into a .cad file.
+        with open('_cad_ui_tmp.cad', 'w') as cad_file:
+        
+            # To maintain backwards compatibility, we need to include
+            # this pair of libraries
+            cad_file.write('from string import *\nfrom math import *\n')
+            
+            # To allow for included files, we modify the python system path
+            if self.cadFileDir:
+                cad_file.write('import sys\nsys.path.append("%s")\n' %
+                               self.cadFileDir)
+        
+            # Check to see if we should abort before writing the file
+            if event.is_set(): return
+                                       
+            cad_file.write(self.frame.GetText())
+        
+        # If we are exporting with a particular file name, then the filename
+        # field should be populated; otherwise, use the default name.
+        if filename is None:
+            filename = '_cad_ui_tmp.math'
+        
+        if BUNDLED:
+            command = ['../MacOS/python', 'cad_math',
+                       '_cad_ui_tmp.cad',target]
+        else:
+            command = ['cad_math', '_cad_ui_tmp.cad', filename]
+        
+        # Last chance to abort before starting the subprocess
+        if event.is_set(): return
+        
+        # Start running the process
+        print '>>  ' + ' '.join(command)
+        process = subprocess.Popen(command, stderr = subprocess.PIPE)
+
+        # Wait for the process to terminate or for the stop event to be set    
+        while process.poll() is None:
+            if event.is_set():
+                process.terminate()
+                return
+    
+        # If something went wrong, try to parse the error messages
+        # and update the GUI accordingly
+        if process.returncode != 0:
+        
+            # Read the text of the error messages
+            errors = process.stderr.readlines()
+            errors = errors[0] + ''.join(errors[3:])
+            
+            # Go through the set of errors and modify line numbers to match
+            # the displayed file (since we may be adding lines to the beginning)
+            line_offset = (4 if self.cadFileDir else 2)
+            for m in re.findall(r'line (\d+)', errors):
+                error_line = int(m) - line_offset
+                errors = errors.replace('line %s' % m, 'line_ %i' % error_line)
+            errors = errors.replace('line_','line')
+            
+            # One more chance to abort before we update the GUI
+            if event.is_set(): return
+            
+            # Write out the errors in the text box
+            wx.CallAfter(self.frame.SetOutput, errors)
+            
+            # Make the image border red
+            wx.CallAfter(self.frame.SetBorder, (255, 0, 0))
+            
+            # Update the status line
+            try:
+                wx.CallAfter(self.frame.MarkError, error_line - 1)
+                wx.CallAfter(self.frame.SetStatus,
+                             "cad_math failed (line %i)" % error_line)
+            except NameError:
+                wx.CallAfter(self.frame.SetStatus, "cad_math failed")
+                
+            return False
+        
+        # If everything worked, then we return delete the temporary file
+        # and return True   
+        os.remove('_cad_ui_tmp.cad')
+        return True
+
+################################################################################
+
+    def math_xyz(self, program, filename, resolution=None,
+                 event=threading.Event(), args = [],
+                 monitor = None):
+        
+        ''' Generic function to run math_png, math_svg, math_stl, etc.
+        
+        '''
+        
+        if BUNDLED:
+            xyz_path = './%s' % program
+        else:
+            xyz_path = program
+        
+        if monitor is None:
+            monitor = self.progress_bar
+            minotaur = "RAWR!"
+        
+        if event.is_set(): return
+        
+        command = [xyz_path] + args + ['_cad_ui_tmp.math', filename]
+        if resolution: command += [str(resolution)]
+        
+        print '>>  ' + ' '.join(command)
+        process = subprocess.Popen(command, stdout=subprocess.PIPE,
+                                   stderr=subprocess.PIPE)
+        
+        monitor(process, event)
+        success = (process.returncode == 0)
+        errors = process.stderr.read()
+        
+        # One more chance to abort before updating the GUI
+        if event.is_set(): return
+                
+        if not success:
+            wx.CallAfter(self.frame.SetOutput, errors)
+            wx.CallAfter(self.frame.SetBorder, (255, 0, 0))
+            wx.CallAfter(self.frame.SetStatus, "%s failed" % program)
+            return False
+        
+        # If everything worked, then we delete the temporary file
+        # and return True
+        os.remove('_cad_ui_tmp.math')
+        return True
+    
+################################################################################
+
+    def math_png(self, resolution, filename = None, event = threading.Event(),
+                 incremental=None):
+    
+        # If we aren't saving to a particular file, use the default
+        if filename is None:
+            filename = '_cad_ui_tmp.png'
+            
+        if incremental is None and not 'Linux' in os.uname():
+            incremental = not(self.cad.zmax - self.cad.zmin > 0)
+        
+        return self.math_xyz('math_png', filename, resolution=resolution,
+                             event=event,
+                             args = ['--incremental'] if incremental else [],
+                             monitor = self.incremental)
+
+################################################################################
+    
+    def math_stl(self, resolution, filename, event = threading.Event()):
+    
+        return self.math_xyz('math_stl', filename,
+                             resolution=resolution, event=event)
+        
+################################################################################
+    
+    def math_svg(self, resolution, filename, event = threading.Event()):
+    
+        return self.math_xyz('math_svg', filename,
+                             resolution=resolution, event=event)
+
+################################################################################
+    
+    def math_dot(self, filename, event = threading.Event()):
+    
+        return self.math_xyz('math_dot', filename, event=event)
+   
+################################################################################
+
+    def progress_bar(self, process, event):
+        ''' Waits for a process to finish, drawing a progress bar.
+        
+            Halts when the progress finishes or the event is set.
+            
+        '''
+        
+        line = ''
+        while process.poll() is None:
+            if event.is_set():
+                process.terminate()
+                return
+                
+            c = process.stdout.read(1)
+            if c == '\n' or c == '\r':
+                print repr(line)
+                if '[|' in line:
+                    line = line[4:]
+                    percent = (line.count('|') * 100) / (len(line) - 2)
+                    if percent < 100:
+                        wx.CallAfter(self.frame.SetStatus,
+                                     "Rendering (%i%%)" % percent)
+                    else:
+                        wx.CallAfter(self.frame.SetStatus,
+                                     "Writing output file")
+                else:
+                    print line
+                line = ''
+            else:
+                line = line + c
+
+################################################################################
+
+    def incremental(self, process, event):
+        ''' Waits for a process to finish, drawing a progress bar and
+            incremental render blobs.
+        
+            Halts when the progress finishes or the event is set.
+            
+        '''
+        
+        try:
+            dc = wx.MemoryDC(self.bitmap)
+            dc.SetPen(wx.TRANSPARENT_PEN)
+        except:
+            dc = None
+        
+        Y_MAX = (self.cad.ymax - self.cad.ymin) * self.cad.mm_per_unit*self.resolution
+
+        line = ''
+
+        if 'Linux' in os.uname():
+            regex = None
+        else:
+            regex = re.compile(
+                r'([0-9]+) ([0-9]+) ([0-9]+) ([0-9]+) (.)'
+            )
+        
+        while process.poll() is None:
+            if event.is_set():
+                process.terminate()
+                return
+                
+            c = process.stdout.read(1)
+            if c == '\n' or c == '\r':
+                if '[|' in line:
+                    line = line[4:]
+                    percent = (line.count('|') * 100) / (len(line) - 2)
+                    if percent < 100:
+                        wx.CallAfter(self.frame.SetStatus,
+                                     "Rendering (%i%%)" % percent)
+                    else:
+                        wx.CallAfter(self.frame.SetStatus,
+                                     "Writing output file")
+                elif regex and regex.match(line):
+                    xmin, xmax, ymin, ymax, color = regex.match(line).groups()
+                    xmin, xmax, ymin, ymax = map(int, (xmin, xmax, ymin, ymax))
+                    color = ord(color)
+                    if dc:
+                        dc.SetBrush(wx.Brush(wx.Colour(color, color, color)))
+                        dc.DrawRectangle(xmin, Y_MAX - ymax,
+                                         xmax-xmin, ymax-ymin)
+                        wx.CallAfter(self.frame.SetImage, self.bitmap)
+                else:
+                    print line
+                line = ''
+            else:
+                line = line + c
+   
+################################################################################
+    
+    def Render(self, e = None):
+        '''Attempt to render the .cad file into an image.'''
+
+        # If this is an event callback, make sure that the box is checked.
+        if e and not e.Checked():
+            return
+        
+        # Tell all of the existing threads to stop (politely)
+        self.stop_threads()
+        
+        # Start up a new thread to render and load the image.
+        self.start_thread(self.render)
+        
+wx.Log.EnableLogging(False)
+app = CadUIApp()
+app.MainLoop()

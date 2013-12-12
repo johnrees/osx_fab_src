@@ -1,0 +1,58 @@
+#!/usr/bin/env python
+#
+# make_stl_g
+#    .stl to .g GUI wrapper
+#
+# Neil Gershenfeld
+# CBA MIT 3/6/11
+#
+# (c) Massachusetts Institute of Technology 2011
+# Permission granted for experimental and personal use;
+# license for commercial sale available from MIT.
+#
+# imports
+#
+import wx,sys
+from fab_set import fab_frame
+from panel_control import control_panel
+from panel_stl import stl_panel
+from panel_stl_png import stl_png_panel
+from panel_png_path import png_path_panel
+from panel_path_g import path_g_panel
+#
+# command line
+#
+print "command line: make_stl_g [input_file [size]]"
+print "   input_file = input .stl file (optional)"
+print "   size = image panel size (optional)"
+#
+# start wx
+#
+app = wx.App()
+#
+# add panels to frame
+#
+frame = fab_frame("make_stl_g",sys.argv)
+frame.control_panel = control_panel(frame)
+frame.sizer.Add(frame.control_panel,(0,0),span=(1,4),flag=wx.ALIGN_CENTER_HORIZONTAL)
+frame.g_panel = path_g_panel(frame)
+frame.sizer.Add(frame.g_panel,(1,3))
+frame.png_path_panel = png_path_panel(frame)
+frame.sizer.Add(frame.png_path_panel,(1,2))
+frame.stl_png_panel = stl_png_panel(frame)
+frame.sizer.Add(frame.stl_png_panel,(1,1))
+frame.stl_panel = stl_panel(frame)
+frame.sizer.Add(frame.stl_panel,(1,0))
+#
+# defaults
+#
+frame.set_stl_g()
+#
+# fit and show frame
+#
+frame.Fit()
+frame.Show()
+#
+# start mainloop
+#
+app.MainLoop()

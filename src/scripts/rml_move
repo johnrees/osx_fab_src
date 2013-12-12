@@ -1,0 +1,33 @@
+#!/bin/bash
+#
+# rml_move
+#    move Roland Modela
+#
+# Neil Gershenfeld
+# CBA MIT 9/18/10
+#
+# (c) Massachusetts Institute of Technology 2010
+# Permission granted for experimental and personal use;
+# license for commercial sale available from MIT.
+#
+
+#
+# check command line
+#
+
+if [ $# -eq 0 ] || [ $# -gt 2 ]; then
+   echo command line: rml_move x y
+   echo "   x,y, = position to move to (mm)"
+   exit
+   fi
+
+#
+# move
+#
+
+x=$(echo "(40.0*$1)/1" | bc) # 40/mm
+y=$(echo "(40.0*$2)/1" | bc)
+echo "PA;PA;!VZ10;!PZ0,100;PU $x $y;PD $x $y;!MC0;" > rml_move.rml
+cat rml_move.rml
+fab_send rml_move.rml
+rm rml_move.rml

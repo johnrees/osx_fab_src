@@ -1,0 +1,59 @@
+#!/usr/bin/env python
+#
+# make_cad_camm
+#    .cad to .camm GUI wrapper
+#
+# Neil Gershenfeld
+# CBA MIT 3/6/11
+#
+# (c) Massachusetts Institute of Technology 2011
+# Permission granted for experimental and personal use;
+# license for commercial sale available from MIT.
+#
+# imports
+#
+import wx,sys
+from fab_set import fab_frame
+from panel_control import control_panel
+from panel_cad import cad_panel
+from panel_cad_png import cad_png_panel
+from panel_png_path import png_path_panel
+from panel_path_camm import path_camm_panel
+#
+# command line
+#
+print "command line: make_cad_camm [input_file [size]]"
+print "   input_file = input .cad file (optional)"
+print "   size = image panel size (optional)"
+#
+# start wx
+#
+app = wx.App()
+#
+# add panels to frame
+#
+frame = fab_frame("make_cad_camm",sys.argv)
+frame.size = frame.size/1.25
+frame.control_panel = control_panel(frame)
+frame.sizer.Add(frame.control_panel,(0,0),span=(1,4),flag=wx.ALIGN_CENTER_HORIZONTAL)
+frame.cad_panel = cad_panel(frame)
+frame.sizer.Add(frame.cad_panel,(1,0))
+frame.png_panel = cad_png_panel(frame)
+frame.sizer.Add(frame.png_panel,(1,1))
+frame.path_panel = png_path_panel(frame)
+frame.sizer.Add(frame.path_panel,(1,2))
+frame.camm_panel = path_camm_panel(frame)
+frame.sizer.Add(frame.camm_panel,(1,3))
+#
+# defaults
+#
+frame.set_cad_camm()
+#
+# fit and show frame
+#
+frame.Fit()
+frame.Show()
+#
+# start mainloop
+#
+app.MainLoop()

@@ -1,0 +1,92 @@
+#!/usr/bin/env python
+#
+# cad_math
+#    convert .cad to .math
+#
+# Neil Gershenfeld
+# CBA MIT 4/18/11
+#
+# (c) Massachusetts Institute of Technology 2010
+# Permission granted for experimental and personal use;
+# license for commercial sale available from MIT.
+#
+#
+
+import sys
+
+# Some older files need these imported
+from math import *
+from string import *
+
+class cad_variables:
+   #
+   # cad variables
+   #
+   def __init__(self):
+      self.xmin = 0 # minimum x value to render
+      self.xmax = 0 # maximum x value to render
+      self.ymin = 0 # minimum y value to render
+      self.ymax = 0 # maximum y value to render
+      self.zmin = 0 # minimum z value to render
+      self.zmax = 0 # maximum z value to render
+      self.layers = [] # optional number of layers to render
+      self.function = '' # cad function
+      self.labels = [] # display labels
+      self.mm_per_unit = 1.0 # file units
+      self.type = 'Boolean' # math string type
+
+cad = cad_variables()
+
+#
+# command line args
+#
+
+if (len(sys.argv) < 3):
+    print "command line: cad_math in.cad out.math [args]"
+    print "   in.cad = input design file"
+    print "   out.math = output math string file"
+    print "   args = arguments to cad script"
+    print "          (delivered in sys.argv)"
+    sys.exit()
+
+
+# This line allows python to find other modules in the same folder
+# as a .cad file.
+sys.path.append('/'.join(sys.argv[1].split('/')[:-1]))
+
+# This allows for multi-file cad documents (e.g. a bunch of individual
+# parts that all look to a set of common constants)
+
+# read & evaluate .cad file
+input_file_name = sys.argv[1]
+output_file_name = sys.argv[2]
+
+sys.argv = [input_file_name] + sys.argv[3:]
+with open(input_file_name, 'r') as f:
+    exec(f.read())
+    
+print "read "+input_file_name
+
+#
+# write .math file
+#
+
+output_file = open(output_file_name,'wb')
+output_file.write("format: %s\n" % cad.type)
+output_file.write("mm per unit: %f\n" % cad.mm_per_unit)
+output_file.write("dx dy dz: %f %f %f\n" % (cad.xmax-cad.xmin,
+                                            cad.ymax-cad.ymin,
+                                            cad.zmax-cad.zmin))
+output_file.write("xmin ymin zmin: %f %f %f\n" % (cad.xmin,
+                                                  cad.ymin,
+                                                  cad.zmin))
+output_file.write("expression: %s" % cad.function)
+
+print "write "+output_file_name
+print "   type: "+cad.type
+print "   units:",cad.mm_per_unit
+print "   dx: %f, dy: %f, dz: %f"%(cad.xmax-cad.xmin,cad.ymax-cad.ymin,cad.zmax-cad.zmin)
+print "   xmin: %f, ymin: %f, zmin: %f"%(cad.xmin,cad.ymin,cad.zmin)
+if (cad.layers != []):
+   print "   layers: %d"%cad.layers
+

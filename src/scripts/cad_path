@@ -1,0 +1,97 @@
+#!/usr/bin/env python
+#
+# cad_path
+#    .cad to .path
+#
+# Neil Gershenfeld
+# CBA MIT 11/6/10
+#
+# (c) Massachusetts Institute of Technology 2010
+# Permission granted for experimental and personal use;
+# license for commercial sale available from MIT.
+#
+
+import sys, os, string
+
+#
+# command line args
+#
+
+if ((len(sys.argv) < 3) | (len(sys.argv) > 11)):
+   print "command line: cad_path in.cad out.path [resolution [error [offset_diameter [offset_number [offset_overlap [z_thickness [z_top [z_bottom]]]]]]]]"
+   print "   in.cad = input .cad file"
+   print "   out.path = output .path file"
+   print "   resolution = pixels per mm (optional, default 10)"
+   print "   error = allowable vector fit deviation (optional, pixels, default 1.1)"
+   print "   offset_diameter = diameter to offset (optional, mm, default 0)"
+   print "   offset_number = number of contours to offset (optional, -1 to fill all, default 1)"
+   print "   offset_overlap = tool offset overlap fraction (optional, 0 (no overlap) - 1 (complete overlap, default 0.5))"
+   print "   z_thickness = slice z thickness (optional, mm, default in.cad value)"
+   print "   z_top = top slice z value (optional, mm, default in.cad value)"
+   print "   z_bottom = bottom slice z value (optional, mm, default in.cad value)"
+   sys.exit()
+
+resolution = "10"
+if (len(sys.argv) > 3):
+   resolution = sys.argv[3]
+error = "1.1"
+if (len(sys.argv) > 4):
+   error = sys.argv[4]
+offset_diameter = "0"
+if (len(sys.argv) > 5):
+   offset_diameter = sys.argv[5]
+offset_numer = "1"
+if (len(sys.argv) > 6):
+   offset_number = sys.argv[6]
+offset_overlap = ".5"
+if (len(sys.argv) > 7):
+   offset_overlap = sys.argv[7]
+
+#
+# convert to .math
+#
+
+cad_file_name = sys.argv[1]
+math_file_name = (os.path.splitext(cad_file_name)[0])+".math"
+os.system("cad_math "+cad_file_name+" "+math_file_name)
+
+#
+# get dims from .math
+#
+
+math_file = open(math_file_name,'r')
+file_type = math_file.readline()
+units = float(math_file.readline())
+(dx,dy,dz) = string.split(math_file.readline())
+dx = units*float(dx)
+dy = units*float(dy)
+dz = units*float(dz)
+(xmin,ymin,zmin) = string.split(math_file.readline())
+xmin = units*float(xmin)
+ymin = units*float(ymin)
+zmin = units*float(zmin)
+math_file.close()
+
+z_thickness = dz
+if (len(sys.argv) > 8):
+   z_thickness = float(sys.argv[8])
+z_top = zmin + dz
+if (len(sys.argv) > 9):
+   z_top = float(sys.argv[9])
+z_bottom = zmin
+if (len(sys.argv) > 10):
+   z_bottom = float(sys.argv[10])
+
+#
+# make image
+#
+
+png_file_name = (os.path.splitext(cad_file_name)[0])+".png"
+nz = int(1 + (z_top-z_bottom)/z_thickness)
+os.system("math_png %s %s %s %d"%(math_file_name,png_file_name,resolution,nz))
+
+#
+# make path
+#
+
+os.system("png_path %s %s %s %s %s %s 1 0 %f %f %f"%(png_file_name,sys.argv[2],error,offset_diameter,offset_number,offset_overlap,z_top,z_bottom,z_thickness))

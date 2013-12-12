@@ -1,0 +1,90 @@
+#!/usr/bin/env python
+
+import datetime
+import os
+import re
+import subprocess
+import shutil
+import sys
+import urllib2
+
+src_zip = os.path.join(os.getenv('HOME'), '__fab_src__.zip')
+src_dir = os.path.join(os.getenv('HOME'), '__fab_src__')
+
+# Check when this script was installed
+my_date = datetime.datetime.fromtimestamp(os.path.getmtime(sys.argv[0]))
+
+def get_date():
+    '''Extracts the snapshot date from the kokompe downloads page.'''
+    html = urllib2.urlopen('http://kokompe.cba.mit.edu/downloads.html').read()
+    date = re.search('Snapshot from ([^\)]*)', html).group(1)
+    return datetime.datetime.strptime(date, '%B %d, %Y, %I:%M%p')
+
+def download():
+    '''Downloads fab_src.zip, saving it in the user's home directory.'''
+    if os.path.isfile(src_zip):
+        print '''Error: Working file ~/__fab_src__.zip already exists.
+Please delete it then rerun fab_update.'''
+        sys.exit(1)
+    zip = urllib2.urlopen('http://kokompe.cba.mit.edu/fab_src.zip')
+    open(src_zip,'wb').write(zip.read())
+
+def unzip():
+    '''Unzips fab_src.zip then removes the zip file.'''
+    if os.path.isdir(src_dir):
+        print '''Error: Working directory ~/__fab_src__ already exists.
+Please delete it then rerun fab_update'''
+        sys.exit(1)
+    os.mkdir(src_dir)
+    os.chdir(src_dir)
+    subprocess.call(['unzip', src_zip])
+    os.remove(src_zip)
+
+def print_help():
+    print '''command line: fab_update [check|install]
+   check will inform you if a newer version of the fab modules is available.
+   install will install a newer version of the fab modules, if applicable.'''
+
+if __name__ == '__main__':
+    if len(sys.argv) == 1:
+        print_help()
+        sys.exit(1)
+
+    # Check the date on the web to figure out if it is newer.
+    web_date = get_date()
+    date_info = '''  Your version was installed %s
+  Online version is dated %s''' % (my_date.strftime('%B %d, %Y, %I:%M%p'),
+                                   web_date.strftime('%B %d, %Y, %I:%M%p'))
+    outdated = web_date > my_date
+
+    # Check to see if the web version is newer than our version.
+    if sys.argv[1] == 'check':
+        web_date = get_date()
+        if outdated:
+            print 'Newer version is available:\n%s' % date_info
+        else:
+            print 'No newer version available:\n%s' % date_info
+
+    # Download & install if the web version is newer than this version
+    elif sys.argv[1] == 'install':
+        web_date = get_date()
+        if not outdated:
+            print 'No newer version available:\n%s' % date_info
+            sys.exit(0)
+        print "Downloading source"
+        download()
+        print "Unzipping source"
+        unzip()
+        print "Installing"
+        if subprocess.call(['make','fab']) != 0:
+            print 'Build failed.  Please make sure your dependancies are up-to-date.'
+            shutil.rmtree(src_dir)
+            sys.exit(1)
+        subprocess.call(['make','install'])
+        shutil.rmtree(src_dir)
+
+    # Invalid option
+    else:
+        print 'Invalid option "%s"' % ' '.join(sys.argv[1:])
+        print_help()
+        sys.exit(1)

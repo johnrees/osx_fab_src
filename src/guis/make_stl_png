@@ -1,0 +1,64 @@
+#!/usr/bin/env python
+#
+# make_stl_png
+#    .stl to .png GUI wrapper
+#
+# Neil Gershenfeld
+# CBA MIT 3/6/11
+#
+# (c) Massachusetts Institute of Technology 2011
+# Permission granted for experimental and personal use;
+# license for commercial sale available from MIT.
+#
+# imports
+#
+import wx,sys
+from fab_set import fab_frame
+from panel_control import control_panel
+from panel_stl import stl_panel
+from panel_stl_png import stl_png_panel
+#
+# command line
+#
+print "command line: make_stl_png [input_file [size]]"
+print "   input_file = input .stl file (optional)"
+print "   size = image panel size (optional)"
+#
+# start wx
+#
+app = wx.App()
+#
+# add panels to frame
+#
+frame = fab_frame("make_stl_png",sys.argv)
+frame.control_panel = control_panel(frame)
+frame.sizer.Add(frame.control_panel,(0,0),span=(1,2),flag=wx.ALIGN_CENTER_HORIZONTAL)
+frame.stl_panel = stl_panel(frame)
+frame.sizer.Add(frame.stl_panel,(1,0))
+frame.stl_png_panel = stl_png_panel(frame)
+frame.sizer.Add(frame.stl_png_panel,(1,1))
+#
+# defaults
+#
+frame.defaults = {}
+frame.control_panel.defaults.Append('inches')
+frame.defaults["inches"] = "\
+self.stl_png_panel.units.SetValue('25.4');\
+self.stl_png_panel.resolution.SetValue('25');"
+frame.control_panel.defaults.Append('mm')
+frame.defaults["mm"] = "\
+self.stl_png_panel.units.SetValue('1');\
+self.stl_png_panel.resolution.SetValue('25');"
+frame.control_panel.defaults.Append('cm')
+frame.defaults["cm"] = "\
+self.stl_png_panel.units.SetValue('10');\
+self.stl_png_panel.resolution.SetValue('25');"
+#
+# fit and show frame
+#
+frame.Fit()
+frame.Show()
+#
+# start mainloop
+#
+app.MainLoop()

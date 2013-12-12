@@ -1,0 +1,72 @@
+#!/usr/bin/env python
+#
+# fab_send
+#    fab modules file send and configuration
+#
+# Neil Gershenfeld
+# CBA MIT 9/16/11
+#
+# (c) Massachusetts Institute of Technology 2011
+# Permission granted for experimental and personal use;
+# license for commercial sale available from MIT.
+#
+
+#
+# file type commands
+#
+
+commands = {
+     '.eps': 'inkscape "$file"',
+     '.grb': 'gerbv "$file"',
+     '.drl': 'gerbv "$file"',
+     '.dxf': 'qcad "$file"',
+     '.epi': 'printer=laser; lprm -P$printer -; lpr -P$printer "$file"',
+     '.uni': 'port=/dev/lp0; cat "$file" > $port',
+     '.stl': 'meshlab "$file"',
+     '.ord': 'gedit "$file"',
+     '.camm': 'printer=vinyl; lpr -P$printer "$file"',
+     '.rml': 'port=/dev/ttyUSB0; rml_send_gui "$file" $port',
+     '.g': 'gedit "$file"',
+     '.sbp': 'gedit "$file"',
+     '.plt': 'gedit "$file"',
+     '.oms': 'gedit "$file"',
+     }
+
+#
+# imports
+#
+
+import sys,os
+
+#
+# command line
+#
+
+if (len(sys.argv) == 1):
+   print "command line: fab_send [file]"
+   print "   file = file to send"
+   print "   file type commands:"
+   print "      ",commands
+   sys.exit()
+
+#
+# get command
+#
+
+filename = sys.argv[1]
+
+filetype = os.path.splitext(filename)[-1]
+
+if (not commands.has_key(filetype)):
+   print "fab_send:",filetype,"not defined"
+   sys.exit()
+
+command = 'file="'+filename+'"; '+commands[filetype]
+
+#
+# execute
+#
+
+print command
+os.system(command)
+

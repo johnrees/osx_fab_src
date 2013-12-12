@@ -1,0 +1,34 @@
+#!/bin/bash
+#
+# cad_png
+#    convert .cad to PNG
+#
+# Neil Gershenfeld
+# CBA MIT 10/27/10
+#
+# (c) Massachusetts Institute of Technology 2010
+# Permission granted for experimental and personal use;
+# license for commercial sale available from MIT.
+#
+
+#
+# check command line
+#
+if [ $# -eq 0 ]; then
+   echo "command line: cad_png in.cad [args]"
+   echo "   in.cad = input .cad file"
+   echo "   args = math_png arguments (optional)"
+   exit
+   fi
+
+#
+# convert to math string
+#
+name=$1
+cad_math $name ${name%.*}.math
+
+#
+# convert to PNG
+#
+shift
+math_png ${name%.*}.math ${name%.*}.png $@

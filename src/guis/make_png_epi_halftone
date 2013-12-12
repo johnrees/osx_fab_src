@@ -1,0 +1,55 @@
+#!/usr/bin/env python
+#
+# make_png_epi_halftone
+#    .png to .epi halftone GUI wrapper
+#
+# Neil Gershenfeld
+# CBA MIT 3/12/11
+#
+# (c) Massachusetts Institute of Technology 2011
+# Permission granted for experimental and personal use;
+# license for commercial sale available from MIT.
+#
+# imports
+#
+import wx,sys
+from fab_set import fab_frame
+from panel_control import control_panel
+from panel_png import png_panel
+from panel_png_path_halftone import png_path_halftone_panel
+from panel_path_epi import path_epi_panel
+#
+# command line
+#
+print "command line: make_png_epi_halftone [input_file [size]]"
+print "   input_file = input .png file (optional)"
+print "   size = image panel size (optional)"
+#
+# start wx
+#
+app = wx.App()
+#
+# add panels to frame
+#
+frame = fab_frame("make_png_epi_halftone",sys.argv)
+frame.control_panel = control_panel(frame)
+frame.sizer.Add(frame.control_panel,(0,0),span=(1,3),flag=wx.ALIGN_CENTER_HORIZONTAL)
+frame.epi_panel = path_epi_panel(frame)
+frame.sizer.Add(frame.epi_panel,(1,2))
+frame.path_panel = png_path_halftone_panel(frame)
+frame.sizer.Add(frame.path_panel,(1,1))
+frame.png_panel = png_panel(frame)
+frame.sizer.Add(frame.png_panel,(1,0))
+#
+# defaults
+#
+frame.set_png_epi_halftone()
+#
+# fit and show frame
+#
+frame.Fit()
+frame.Show()
+#
+# start mainloop
+#
+app.MainLoop()

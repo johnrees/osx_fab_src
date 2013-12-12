@@ -1,0 +1,15 @@
+kokopelli:
+    This is a bundled version of kokopelli, an unusual CAD package.
+    It should be considered alpha software.  Use at your own risk.
+    
+Online:
+    kokopelli is usually distributed as part of the fab modules,
+    found online at http://kokompe.cba.mit.edu
+
+License:
+    kokopelli is freely available for for experimental and personal use;
+    license for commercial sale is available from MIT.
+
+Contact:
+    Matt Keeter
+    matt.keeter@cba.mit.edu

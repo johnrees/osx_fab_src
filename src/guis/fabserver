@@ -1,0 +1,369 @@
+#!/usr/bin/env python
+#
+# fabserver.py
+# command line syntax: python fabserver.py port
+#
+# Neil Gershenfeld
+# CBA MIT 12/6/12
+#
+# (c) Massachusetts Institute of Technology 2012
+# Permission granted for experimental and personal use;
+# license for commercial sale available from MIT.
+#
+
+from socket import *
+from string import *
+from select import *
+from math import *
+import sys
+import subprocess
+import os
+import glob
+
+MAX_PACKET = 4096
+MAX_RESPONSE = 10000000
+PACKET_TIMEOUT = 0.01
+
+SERVER_ADDRESS = "127.0.0.1"
+
+def send_image(msg):
+   client_socket.sendall(
+      'HTTP/1.1 200 OK\n'
+      +'Content-Length: %d\n'%len(msg)
+      +'Content-Type: image/jpeg\n'
+      +'\n'
+      +msg
+      )
+
+def send_text(text):
+   client_socket.sendall(
+      'HTTP/1.1 200 OK\n'
+      +'Content-Type: text/html\n'
+      +'\n'
+      +'\n'
+      +text
+      )
+
+def parse():
+   global mode, units, dx, dy, dz, xmin, ymin, zmin, xrot, yrot, zrot, resolution, slices, expression
+   #
+   # parse math string
+   #
+   start = 0
+   start = 1+find(response,"{",start)
+   end = find(response,"}",start)
+   mode = response[start:end]
+   start = 1+find(response,"{",end)
+   end = find(response,"}",start)
+   units = response[start:end]
+   start = 1+find(response,"{",end)
+   end = find(response,"}",start)
+   dx = response[start:end]
+   start = 1+find(response,"{",end)
+   end = find(response,"}",start)
+   dy = response[start:end]
+   start = 1+find(response,"{",end)
+   end = find(response,"}",start)
+   dz = response[start:end]
+   start = 1+find(response,"{",end)
+   end = find(response,"}",start)
+   xmin = response[start:end]
+   start = 1+find(response,"{",end)
+   end = find(response,"}",start)
+   ymin = response[start:end]
+   start = 1+find(response,"{",end)
+   end = find(response,"}",start)
+   zmin = response[start:end]
+   start = 1+find(response,"{",end)
+   end = find(response,"}",start)
+   xrot = float(response[start:end])
+   start = 1+find(response,"{",end)
+   end = find(response,"}",start)
+   yrot = float(response[start:end])
+   start = 1+find(response,"{",end)
+   end = find(response,"}",start)
+   zrot = float(response[start:end])
+   start = 1+find(response,"{",end)
+   end = find(response,"}",start)
+   resolution = response[start:end]
+   start = 1+find(response,"{",end)
+   end = find(response,"}",start)
+   slices = response[start:end]
+   start = 1+find(response,"{",end)
+   end = find(response,"}",start)
+   expression = response[start:end]
+
+def render():
+   #
+   # render math string, xy view
+   #
+   math_file = open("fab_render_xy.math","w")
+   math_file.write("format: "+mode+"\n")
+   math_file.write("mm per unit: "+units+"\n")
+   math_file.write("dx dy dz: "+dx+" "+dy+" "+dz+"\n")
+   math_file.write("xmin ymin zmin: "+xmin+" "+ymin+" "+zmin+"\n")
+   math_file.write("expression: "+expression+"\n")
+   math_file.close()
+   os.system("math_png fab_render_xy.math fab_render_xy.png "+resolution+" "+slices)
+   os.system("rm fab_render_xy.math")
+   if (float(dz) != 0):
+      #
+      # xz view
+      #
+      math_file = open("fab_render_xz.math","w")
+      math_file.write("format: "+mode+"\n")
+      math_file.write("mm per unit: "+units+"\n")
+      math_file.write("dx dy dz: "+dx+" "+dz+" "+dy+"\n")
+      math_file.write("xmin ymin zmin: "+xmin+" "+zmin+" "+ymin+"\n")
+      math_file.write("expression: "+expression+"\n")
+      new_expression = replace(expression,'Y','#')
+      new_expression = replace(new_expression,'Z','Y')
+      new_expression = replace(new_expression,'#','Z')
+      math_file.write("expression: "+new_expression+"\n")
+      math_file.close()
+      os.system("math_png fab_render_xz.math fab_render_xz.png "+resolution+" "+slices)
+      os.system("rm fab_render_xz.math")
+      #
+      # zy view
+      #
+      math_file = open("fab_render_zy.math","w")
+      math_file.write("format: "+mode+"\n")
+      math_file.write("mm per unit: "+units+"\n")
+      math_file.write("dx dy dz: "+dz+" "+dy+" "+dx+"\n")
+      math_file.write("xmin ymin zmin: "+zmin+" "+ymin+" "+xmin+"\n")
+      new_expression = replace(expression,'X','#')
+      new_expression = replace(new_expression,'Z','((%f)-X)'%(float(dz)+2*float(zmin)))
+      new_expression = replace(new_expression,'#','Z')
+      math_file.write("expression: "+new_expression+"\n")
+      math_file.close()
+      os.system("math_png fab_render_zy.math fab_render_zy.png "+resolution+" "+slices)
+      os.system("rm fab_render_zy.math")
+      #
+      # xyz view
+      #
+      math_file = open("fab_render_xyz.math","w")
+      math_file.write("format: "+mode+"\n")
+      math_file.write("mm per unit: "+units+"\n")
+      math_file.write("dx dy dz: "+"2"+" "+"2"+" "+"2"+"\n")
+      math_file.write("xmin ymin zmin: "+"-1"+" "+"-1"+" "+"-1"+"\n")
+      #
+      # view scaling
+      #
+      -1
+      1
+      new_expression = replace(expression,'X','(('+xmin+')+'+dx+'*(X+1)/2)')
+      new_expression = replace(new_expression,'Y','(('+ymin+')+'+dy+'*(Y+1)/2)')
+      new_expression = replace(new_expression,'Z','(('+zmin+')+'+dz+'*(Z+1)/2)')
+      #new_expression = replace(expression,'X','(X+('+xmin+')+1)')
+      #new_expression = replace(new_expression,'Y','(Y+('+ymin+')+1)')
+      #new_expression = replace(new_expression,'Z','(Z+('+zmin+')+1)')
+      # 
+      # z rotation
+      #
+      new_expression = replace(new_expression,'X','(('+str(cos(zrot))+')*X+('+str(-sin(zrot))+')*ytemp)')
+      new_expression = replace(new_expression,'Y','(('+str(sin(zrot))+')*X+('+str(cos(zrot))+')*Y)')
+      new_expression = replace(new_expression,'ytemp','Y')
+      #
+      # y rotation (not used in GUI)
+      #
+      #
+      # x rotation
+      #
+      new_expression = replace(new_expression,'Y','(('+str(cos(xrot))+')*Y+('+str(sin(xrot))+')*ztemp)')
+      new_expression = replace(new_expression,'Z','(('+str(-sin(xrot))+')*Y+('+str(cos(xrot))+')*Z)')
+      new_expression = replace(new_expression,'ztemp','Z')
+      #
+      # write and evaluate
+      #
+      math_file.write("expression: "+new_expression+"\n")
+      math_file.close()
+      os.system("math_png fab_render_xyz.math fab_render_xyz.png "+resolution+" "+slices)
+      os.system("rm fab_render_xyz.math")
+   #send_text("render")
+
+#
+# get command line arguments
+#
+if (len(sys.argv) != 2):
+   print "command line syntax: python fabserver.py port"
+   sys.exit()
+server_port = sys.argv[1]
+#
+# start listening on server port
+#
+try:
+   server_socket = socket(AF_INET, SOCK_STREAM)
+   server_socket.bind((SERVER_ADDRESS,int(server_port)))
+   server_socket.listen(5)
+   print "listening on port "+server_port
+except:
+   print "error: couldn't open socket"
+   sys.exit()
+
+#
+# start main loop
+#
+while 1:
+   #
+   # blocking select call to wait for a connection
+   #
+   [read_ready, write_ready, error_ready] = select([server_socket],[],[])
+   if (read_ready != []):
+      #
+      # child process, non-blocking select call to receive packet
+      #
+      (client_socket, client_address) = server_socket.accept()
+      response = ""
+      while 1:
+         [read_ready, write_ready, error_ready] = select([client_socket],[],[],PACKET_TIMEOUT)
+         if (read_ready != []):
+            response += client_socket.recv(MAX_PACKET)
+         else:
+            break
+      #
+      # process response
+      #
+      #print response
+      if (find(response,"GET / ") == 0):
+         #
+         # root request, send fab.html
+         #
+         file = open(os.path.join(os.path.dirname(sys.argv[0]), 'fab.html'),
+                     'rb')
+         msg = file.read()
+         file.close()
+         send_text(msg)
+      elif (find(response,"GET /fab_render_xy.png") == 0):
+         try:
+            file = open('fab_render_xy.png','rb')
+            os.system("rm fab_render_xy.png")
+            msg = file.read()
+            file.close()
+            send_image(msg)
+         except IOError:
+            print "oops"
+      elif (find(response,"GET /fab_render_xz.png") == 0):
+         try:
+            file = open('fab_render_xz.png','rb')
+            os.system("rm fab_render_xz.png")
+            msg = file.read()
+            file.close()
+            send_image(msg)
+         except IOError:
+            print "oops"
+      elif (find(response,"GET /fab_render_zy.png") == 0):
+         try:
+            file = open('fab_render_zy.png','rb')
+            os.system("rm fab_render_zy.png")
+            msg = file.read()
+            file.close()
+            send_image(msg)
+         except IOError:
+            print "oops"
+      elif (find(response,"GET /fab_render_xyz.png") == 0):
+         try:
+            file = open('fab_render_xyz.png','rb')
+            os.system("rm fab_render_xyz.png")
+            msg = file.read()
+            file.close()
+            send_image(msg)
+         except IOError:
+            print "oops"
+      elif (find(response,"GET /fab.html") == 0):
+         file = open('fab.html','rb')
+         msg = file.read()
+         file.close()
+         send_text(msg)
+      elif (find(response,"GET /quit") == 0):
+         break
+      elif (find(response,"POST /list_files") == 0):
+         files = glob.glob('*.fab')
+         file_names = ','.join(files)
+         cwd = os.getcwd()
+         dirs = filter(os.path.isdir, os.listdir('.'))  
+         dirs_names = ','.join(dirs)
+         send_text(file_names+';'+cwd+';'+dirs_names)
+      elif (find(response,"POST /cd") == 0):
+         start = 1+find(response,"{")
+         end = find(response,"}",start)
+         dir_name = response[start:end]
+         os.chdir(dir_name)
+         files = glob.glob('*.fab')
+         file_names = ','.join(files)
+         cwd = os.getcwd()
+         dirs = filter(os.path.isdir, os.listdir('.'))  
+         dirs_names = ','.join(dirs)
+         send_text(file_names+';'+cwd+';'+dirs_names)
+      elif (find(response,"POST /delete") == 0):
+         start = 1+find(response,"{")
+         end = find(response,"}",start)
+         file_name = response[start:end]
+         os.remove(file_name)
+         files = glob.glob('*.fab')
+         file_names = ','.join(files)
+         cwd = os.getcwd()
+         dirs = filter(os.path.isdir, os.listdir('.'))  
+         dirs_names = ','.join(dirs)
+         send_text(file_names+';'+cwd+';'+dirs_names)
+      elif (find(response,"POST /open") == 0):
+         start = 1+find(response,"{")
+         end = find(response,"}",start)
+         file_name = response[start:end]
+         print "file"+file_name+"name"
+         try:
+            file = open(file_name,'rb')
+            msg = file.read()
+            file.close()
+            send_text(msg)
+         except IOError:
+            print "oops"
+      elif (find(response,"POST /render") == 0):
+         #
+         # render
+         #
+         parse()
+         render()
+      elif (find(response,"POST /fabricate") == 0):
+         #
+         # fabricate
+         #
+         parse()
+         math_file = open("fab_render_xy.math","w")
+         math_file.write("format: "+mode+"\n")
+         math_file.write("mm per unit: "+units+"\n")
+         math_file.write("dx dy dz: "+dx+" "+dy+" "+dz+"\n")
+         math_file.write("xmin ymin zmin: "+xmin+" "+ymin+" "+zmin+"\n")
+         math_file.write("expression: "+expression+"\n")
+         math_file.close()
+         os.system("fab fab_render_xy.math")
+         os.system("rm fab_render_xy.math")
+      elif (find(response,"POST /save_graph") == 0):
+         start = 17+find(response,"POST /save_graph")
+         end = find(response,"/",start)
+         file_name = response[start:end]
+         file = open(file_name,"w")
+         start = find(response,"graph start:")
+         file.writelines(response[start:])
+         file.close()
+         client_socket.send("saved "+file_name)
+      elif (find(response,"POST /save_math") == 0):
+         start = 16+find(response,"POST /save_math")
+         end = find(response,"/",start)
+         file_name = response[start:end]
+         parse()
+         math_file = open(file_name,"w")
+         math_file.write("format: "+mode+"\n")
+         math_file.write("mm per unit: "+units+"\n")
+         math_file.write("dx dy dz: "+dx+" "+dy+" "+dz+"\n")
+         math_file.write("xmin ymin zmin: "+xmin+" "+ymin+" "+zmin+"\n")
+         math_file.write("expression: "+expression+"\n")
+         math_file.close()
+         client_socket.send("saved "+file_name)
+      #
+      # close connection socket and exit
+      #
+      client_socket.close()
+#
+# close server socket and exit
+#
+server_socket.close()

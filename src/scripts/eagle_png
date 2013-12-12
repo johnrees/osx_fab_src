@@ -1,0 +1,185 @@
+#!/usr/bin/env python
+
+import os
+import sys
+import platform
+import glob
+import subprocess
+import hashlib
+
+def find_eagle():
+    if platform.uname()[0] == 'Darwin':
+        try:
+            eagle_dir = glob.glob('/Applications/EAGLE*')[-1]
+        except IndexError:
+            sys.stderr.write("Error: EAGLE not found.\n")
+            sys.exit(1)
+        
+        return eagle_dir + '/EAGLE.app/Contents/MacOS/EAGLE'
+    else:
+        if subprocess.call(['which','eagle'],
+                           stdout = open(os.devnull, 'w')):
+            sys.stderr.write("Error: EAGLE not found.\n")
+            sys.exit(1)
+        return 'eagle'
+
+def create_images(name, resolution = 1500):
+    for img in ['top','bottom','cutout','holes','vias']:
+        file = '%s.%s.png' % (name, img)
+        if os.path.isfile(file):
+            os.remove(file)
+
+    script = '''
+ratsnest; write;
+set palette black; window;
+display none top vias pads;
+export image '{name}.top.png' monochrome {resolution};
+display none bottom vias pads;
+export image '{name}.bottom.png' monochrome {resolution};
+display none milling;
+export image '{name}.cutout.png' monochrome {resolution};
+display none holes;
+export image '{name}.holes.png' monochrome {resolution};
+display none vias pads;
+export image '{name}.vias.png' monochrome {resolution};
+quit'''.format(name = name, resolution = resolution)
+    subprocess.call([find_eagle(), '-C', script, name + '.brd'])
+
+def md5(filename):
+    with open(filename,'rb') as f:
+        m = hashlib.md5()
+        for chunk in iter(lambda: f.read(m.block_size*128), ''):
+            m.update(chunk)
+    return m.digest()
+
+def clean_up(name):
+    preserve = ['top','bottom','cutout']
+    for img in ['top','bottom','cutout','holes','vias']:
+        file = '%s.%s.png'   % (name, img)
+        file_ = '%s.%s_.png' % (name, img)
+        if os.path.isfile(file) and img not in preserve:
+            os.remove(file)
+        if os.path.isfile(file_):
+            os.remove(file_)
+
+def print_help():
+    print """command line: eagle_png [options] target.brd
+   target.brd = EAGLE brd file to render
+   The board outline should be a solid polygon on the 'milling' layer
+   Internal cutouts should be solid shapes on the 'holes' layer
+   
+   Valid options:
+       --resolution NUM : sets output image resolution
+       --doublesided : forces double-sided mode"""
+    sys.exit(1)
+
+if __name__ == '__main__':
+    if len(sys.argv) == 1:
+        print_help()
+        sys.exit(1)
+
+    # Parse arguments
+    sys.argv = sys.argv[1:]
+    resolution = 1500
+    force_doublesided = False
+    
+    while sys.argv:
+        if sys.argv[0] == '--resolution':
+            try:
+                resolution = sys.argv[1]
+                sys.argv = sys.argv[2:]
+            except IndexError:
+                sys.stderr.write("Error: No resolution provided.\n")
+                sys.exit(1)
+            try:
+                resolution = int(resolution)
+            except ValueError:
+                sys.stderr.write("Error: Invalid resolution.\n")
+                sys.exit(1)
+            
+        elif sys.argv[0] == '--doublesided':
+            force_doublesided = True
+            sys.argv = sys.argv[1:]
+        
+        elif len(sys.argv) == 1:
+            break
+    else:
+        sys.stderr.write("Error: No filename provided.\n")
+        sys.exit(1)
+
+    name = sys.argv[0].replace('.brd','')
+    if not os.path.isfile(name+'.brd'):
+        sys.stderr.write("Error: .brd file does not exist.\n")
+        sys.exit(1)
+    
+    vias    = name + '.vias.png'
+    cutout  = name + '.cutout.png'
+    top     = name + '.top.png'
+    bottom  = name + '.bottom.png'
+    holes   = name + '.holes.png'
+    
+    print "Rendering images."
+    create_images(name, resolution)
+
+    # Check to make sure that imagemagick is installed.
+    if subprocess.call(['which','convert'], stdout = open(os.devnull, 'w')):
+        sys.stderr.write("""Error: 'convert' not found.
+ImageMagick command-line tools must be installed to use eagle_png.""")
+        sys.exit(1)
+        
+    print "Processing images."
+    
+    # The following command is a set of ImageMagick instructions that
+    # combine all of the images.
+    
+    # The following steps take place:
+    #   - Perform a white flood fill on the vias image, starting in the upper
+    #       left corner.  This makes the via image a set of black holes on
+    #       a uniform white background
+    #   - Multiply the vias and cutout images, to cut the via holes from
+    #       the cutout region.
+    #   - Invert the cutout image.
+    #   - Lighten the top and bottom traces with the inverted cutout.  This
+    #       ensures that we don't waste time milling traces in regions that
+    #       will be cut out of the PCB.
+    #   - Subtract the holes image from the original cutout image
+    #   - Save this combined cutout image
+    
+    command = [ 'convert',
+                vias, '-fill', 'white', '-draw', 'color 0,0 floodfill',
+                cutout, '-compose', 'Darken', '-composite',
+                '-compose','Lighten',
+                '(',
+                    '+clone',
+                    '-negate'
+              ]
+    
+    # If this is a two-sided board, then process the bottom layer
+    if md5(bottom) != md5(vias) or force_doublesided:
+        command += [    
+                    '(',
+                        '+clone', bottom, '-composite',
+                        '-flop', '-write', bottom, '+delete',
+                    ')'
+                    ]
+    else:
+        os.remove(bottom)
+    
+    # Process the top layer       
+    command += [        
+                top, '-composite', '-write', top,
+                    '+delete',
+                ')',
+                holes,  '-compose', 'Minus_Src', '-composite', cutout
+                ]
+    
+    # Execute this whole mess
+    subprocess.call(command)
+    
+    os.remove(vias)
+    os.remove(holes)
+    
+    if bottom in command:
+        print "Generated %s, %s, %s." % (top, bottom, cutout)
+    else:
+        print "Generated %s, %s." % (top, cutout)

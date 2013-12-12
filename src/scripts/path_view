@@ -1,0 +1,43 @@
+#!/bin/bash
+#
+# path_view
+#    view path file
+#
+# Neil Gershenfeld
+# CBA MIT 9/18/10
+#
+# (c) Massachusetts Institute of Technology 2010
+# Permission granted for experimental and personal use;
+# license for commercial sale available from MIT.
+#
+
+#
+# check command line
+#
+if [ $# -eq 0 ] || [ $# -gt 3 ]; then
+   echo "command line: path_view in.path [view [viewer]]"
+   echo "   in.path = input path file"
+   echo "   view = view projection(s) (optional, z|3, default z)"
+   echo "   viewer = PostScript viewer [default evince]"
+   exit
+   fi
+#
+# get command line arguments
+#
+view="z"
+if [ $# -eq 2 ]
+   then
+      view=$2
+   fi
+#
+viewer="evince"
+if [ $# -eq 3 ]
+   then
+      viewer=$3
+   fi
+#
+# view file
+#
+path_ps $1 $1.ps $view
+$viewer $1.ps
+rm $1.ps

@@ -1,0 +1,56 @@
+#!/usr/bin/env python
+#
+# make_cad_png
+#    .cad to .png GUI wrapper
+#
+# Neil Gershenfeld
+# CBA MIT 2/18/11
+#
+# (c) Massachusetts Institute of Technology 2011
+# Permission granted for experimental and personal use;
+# license for commercial sale available from MIT.
+#
+# imports
+#
+import wx,sys
+from fab_set import fab_frame
+from panel_control import control_panel
+from panel_cad import cad_panel
+from panel_cad_png import cad_png_panel
+#
+# command line
+#
+print "command line: make_cad_png [input_file [size]]"
+print "   input_file = input .cad file (optional)"
+print "   size = image panel size (optional)"
+#
+# start wx
+#
+app = wx.App()
+#
+# add panels to frame
+#
+frame = fab_frame("make_cad_png",sys.argv)
+frame.control_panel = control_panel(frame)
+frame.sizer.Add(frame.control_panel,(0,0),span=(1,2),flag=wx.ALIGN_CENTER_HORIZONTAL)
+frame.cad_panel = cad_panel(frame)
+frame.sizer.Add(frame.cad_panel,(1,0))
+frame.cad_png_panel = cad_png_panel(frame)
+frame.sizer.Add(frame.cad_png_panel,(1,1))
+#
+# defaults
+#
+frame.defaults = {}
+frame.control_panel.defaults.Append('preview')
+frame.defaults["preview"] = "self.png_panel.resolution.SetValue('10')"
+frame.control_panel.defaults.Append('render')
+frame.defaults["render"] = "self.png_panel.resolution.SetValue('50')"
+#
+# fit and show frame
+#
+frame.Fit()
+frame.Show()
+#
+# start mainloop
+#
+app.MainLoop()

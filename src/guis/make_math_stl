@@ -1,0 +1,52 @@
+#!/usr/bin/env python
+#
+# make_math_stl
+#    .math to .stl GUI wrapper
+#
+# Neil Gershenfeld
+# CBA MIT 9/25/12
+#
+# (c) Massachusetts Institute of Technology 2012
+# Permission granted for experimental and personal use;
+# license for commercial sale available from MIT.
+#
+# imports
+#
+import wx,sys
+from fab_set import fab_frame
+from panel_control import control_panel
+from panel_math import math_panel
+from panel_math_stl import math_stl_panel
+#
+# command line
+#
+print "command line: make_math_stl [input_file [size]]"
+print "   input_file = input .math file (optional)"
+print "   size = image panel size (optional)"
+#
+# start wx
+#
+app = wx.App()
+#
+# add panels to frame
+#
+frame = fab_frame("make_math_stl",sys.argv)
+frame.control_panel = control_panel(frame)
+frame.sizer.Add(frame.control_panel,(0,0),span=(1,2),flag=wx.ALIGN_CENTER_HORIZONTAL)
+frame.math_panel = math_panel(frame)
+frame.sizer.Add(frame.math_panel,(1,0))
+frame.stl_panel = math_stl_panel(frame)
+frame.sizer.Add(frame.stl_panel,(1,1))
+#
+# defaults
+#
+frame.defaults = {}
+#
+# fit and show frame
+#
+frame.Fit()
+frame.Show()
+#
+# start mainloop
+#
+app.MainLoop()
