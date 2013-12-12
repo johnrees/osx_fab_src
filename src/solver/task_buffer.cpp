@@ -2,7 +2,7 @@
 #include "task_buffer.hpp"
 
 #include <iostream>
-// using namespace std;
+using namespace std;
 
 typedef boost::lock_guard<boost::mutex> lock_guard;
 
@@ -58,7 +58,7 @@ bool TaskBuffer::add(Region region)
 
 bool TaskBuffer::add(Region region, MathTree* tree)
 {
-
+    
     {   // Check to see if a thread is available for this
         // new unassigned task.
         lock_guard lock(master_mutex);
@@ -72,11 +72,11 @@ bool TaskBuffer::add(Region region, MathTree* tree)
     {   // Figure out which task slot we're about to fill
         lock_guard lock(add_mutex);
         pos = add_position;
-
+        
         // Increment the add position in the buffer
         add_position = (add_position + 1) % size;
     }
-
+    
     {   // Fill the task slot
         lock_guard lock(tasks[pos].mutex);
         if (tree)
@@ -88,7 +88,7 @@ bool TaskBuffer::add(Region region, MathTree* tree)
     }
     // Notify anyone that has been waiting on this slot.
     tasks[pos].condition.notify_one();
-
+    
     return true;
 }
 
@@ -115,18 +115,18 @@ Task TaskBuffer::next()
         pos = read_position;
         read_position = (read_position + 1) % size;
     }
-
+    
     {   // Mark that this thread is inactive
         lock_guard lock(master_mutex);
         active_threads--;
-
+        
         // If all threads are inactive and there are no unassigned
         // tasks, then we're done with evaluation.  finish() fills the buffer
         // with null tasks to signal the end of execution.
         if (active_threads == 0 && unassigned_tasks == 0)
             finish();
     }
-
+    
     Task t;
     {   // Wait until this task slot is filled, then claim the task.
         boost::unique_lock<boost::mutex> lock(tasks[pos].mutex);
@@ -135,13 +135,13 @@ Task TaskBuffer::next()
         t = tasks[pos].task;
         tasks[pos].ready = false;
     }
-
+    
     {   // Note that this thread is now active.
         lock_guard lock(master_mutex);
         unassigned_tasks--;
         active_threads++;
     }
-
+    
     return t;
 }
 

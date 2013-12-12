@@ -9,13 +9,13 @@
 // performed, and displayed for any purpose, but must
 // acknowledge the fab modules project. Copyright is
 // retained and must be preserved. The work is provided
-// as is; no warranty is provided, and users accept all
+// as is; no warranty is provided, and users accept all 
 // liability.
 //
 
 #include "fab.h"
 
-void fab_find_time(struct fab_vars *v, float units, float move, float height, float jog, float plunge, float *time, int *segments, int *points) {
+fab_find_time(struct fab_vars *v, float units, float move, float height, float jog, float plunge, float *time, int *segments, int *points) {
    float xscale, yscale, zscale;
    float xoffset, yoffset, zoffset;
    float xold, yold, zold, xnew, ynew, znew;

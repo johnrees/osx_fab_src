@@ -4,7 +4,7 @@
 #include "node.hpp"
 #include "switches.hpp"
 
-// using namespace std;
+using namespace std;
 
 typedef boost::lock_guard<boost::mutex> lock_guard;
 
@@ -15,7 +15,7 @@ MathTree::MathTree()
 }
 
 MathTree::~MathTree()
-{
+{   
     // If this tree is a clone, then notify the parent (because the parent will be
     // waiting for this tree to be deleted before it can delete itself).
     if (parent) {
@@ -51,8 +51,8 @@ MathTree* MathTree::clone()
     m->num_levels = num_levels;
     m->levels = new Node**[num_levels];
     m->active_nodes = new int[num_levels];
-    m->dNodes = new std::list<int>[num_levels];
-
+    m->dNodes = new list<int>[num_levels];
+    
     // Clone all of the active nodes.
     // Since constants aren't changing, we don't need to clone them.
     for (int i = 0; i < num_levels; ++i) {
@@ -61,25 +61,25 @@ MathTree* MathTree::clone()
         for (int j = 0; j < active_nodes[i]; ++j)
             m->levels[i][j] = levels[i][j]->clone();
     }
-
+    
     // If the entire tree is constant, then point back to this
     // original tree's root.
     if (num_levels)
         m->root = m->levels[num_levels - 1][0];
     else
         m->root = root;
-
+    
     clones.push_back(new ThreadComm());
     m->parent = clones.back();
-
+    
     return m;
 }
 
 void MathTree::wait_for_clones()
 {
-
+    
     // Go through the list, waiting for each of the children.
-    std::list<ThreadComm*>::iterator it = clones.begin();
+    list<ThreadComm*>::iterator it = clones.begin();   
     while (it != clones.end())
     {
         {
@@ -113,8 +113,8 @@ void MathTree::pack()
     num_levels = level_list.size();
     levels = new Node**[num_levels];
     active_nodes = new int[num_levels];
-    dNodes = new std::list<int>[num_levels];
-
+    dNodes = new list<int>[num_levels];
+    
     for (int i = 0; i < num_levels; ++i)
     {
         active_nodes[i] = level_list[i].size();
@@ -171,20 +171,20 @@ void MathTree::push()
     // Pass downwards through the tree.  If a node is cached
     // (meaning it won't change upon further recursion), then
     // tell its children that they are no longer being watched.
-
+    
     // If all of a node's parents are no longer watching it, then
     // remove that node from the tree as well (and inform its children)
-
+    
     // Keep track of how many nodes were removed from the tree
     // in the dNodes[i] stack.
-
+    
     for (int i = num_levels - 2; i >= 0; --i) {
         dNodes[i].push_back(0);
         for (int j = 0; j < active_nodes[i]; ++j) {
             if (levels[i][j]->cacheable())
             {
                 levels[i][j]->deactivate();
-                std::swap(levels[i][j--], levels[i][--active_nodes[i]]);
+                swap(levels[i][j--], levels[i][--active_nodes[i]]);
                 dNodes[i].back()++;
             }
         }
@@ -195,9 +195,9 @@ void MathTree::pop()
 {
     // Increase the number of active nodes in the arrays so that
     // previous cached nodes are now evaluated.
-
+    
     for (int i = 0; i < num_levels - 1; ++i) {
-
+    
         // Activate each of the previously disabled nodes.
         for (int n = 0; n < dNodes[i].back(); ++n) {
             levels[i][active_nodes[i]++]->activate();
@@ -206,38 +206,38 @@ void MathTree::pop()
     }
 }
 
-std::ostream& operator<<(std::ostream& o, const MathTree& t)
+ostream& operator<<(ostream& o, const MathTree& t)
 {
     o << "Constants (" << t.constants.size() << " items)\n";
     MathTreeConstIter it;
     for (it = t.constants.begin(); it != t.constants.end(); ++it)
         o << '\t' << **it << '\n';
-    o << std::endl;
-
+    o << endl;
+    
     for (int i = 0; i < t.num_levels; ++i)
     {
         o << "Level " << i << " (" << t.active_nodes[i] << " items)\n";
         for (int j = 0; j < t.active_nodes[i]; ++j)
             o << '\t' << *t.levels[i][j] << '\n';
-        o << std::endl;
+        o << endl;
     }
     return o;
 }
 
-void MathTree::export_dot(std::string filename) const
+void MathTree::export_dot(string filename) const
 {
-    std::ofstream out;
+    ofstream out;
     out.open(filename.c_str());
     out << "digraph math {\n"
         << "node [rank = min, fontsize = 14, fontname = Arial]\n";
     MathTreeConstIter it;
     for (it = constants.begin(); it != constants.end(); ++it)
        (**it).dot(out);
-
+        
     for (int i = 0; i < num_levels; ++i)
         for (int j = 0; j < active_nodes[i]; ++j)
             levels[i][j]->dot(out);
-
+            
     out << "}\n";
     out.close();
 }
