@@ -6,7 +6,7 @@
 
 using namespace std;
 
-typedef boost::lock_guard<boost::mutex> lock_guard;
+typedef boost::lock_guard<boost::mutex> locker;
 
 MathTree::MathTree()
     : root(NULL), levels(NULL), active_nodes(NULL), dNodes(NULL), parent(NULL)
@@ -19,7 +19,7 @@ MathTree::~MathTree()
     // If this tree is a clone, then notify the parent (because the parent will be
     // waiting for this tree to be deleted before it can delete itself).
     if (parent) {
-        lock_guard lock(parent->mutex);
+        locker lock(parent->mutex);
         parent->done = true;
         parent->condition.notify_one();
     }

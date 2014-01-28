@@ -2,7 +2,7 @@
 // gif_stl.c
 //    .gif to .stl
 //
-// Neil Gershenfeld 11/4/13
+// Neil Gershenfeld 12/11/13
 // (c) Massachusetts Institute of Technology 2013
 //
 // This work may be reproduced, modified, distributed,
@@ -442,14 +442,14 @@ int main(int argc, char **argv) {
       printf("command line: gif_stl in.gif out.stl [threshold [size [points [angle]]]]\n");
       printf("   in.gif = input GIF section file\n");
       printf("   out.stl = output STL file\n");
-      printf("   threshold: surface threshold (0-255, default 128))\n");
+      printf("   threshold: surface intensity threshold (0 = min, 1 = max, default 0.5))\n");
       printf("   size = voxel size (mm, default from file))\n");
       printf("   points = points to interpolate per point (default 0)\n");
       printf("   to be implemented: angle = minimum relative face angle to decimate vertices (default 0)\n");
       exit(-1);
       }
    p = 0;
-   threshold = 128;
+   threshold = 0.5;
    voxel_size = -1;
    image_width = -1;
    image_height = -1;
@@ -475,6 +475,8 @@ int main(int argc, char **argv) {
       exit(-1);
       }
    GIFline = malloc(MAX_LINE*sizeof(GifPixelType));
+   imin = 256;
+   imax = 0;
    do {
       DGifGetRecordType(GIFfile,&GIFtype);
       switch (GIFtype) {
@@ -489,6 +491,10 @@ int main(int argc, char **argv) {
                if (ret != GIF_OK) {
                   printf("gif_stl: oops -- error reading line\n");
                   exit(-1);
+                  }
+               for (x = 0; x < GIFfile->SWidth; ++x) {
+                  if (GIFline[x] < imin) imin = GIFline[x];
+                  if (GIFline[x] > imax) imax = GIFline[x];
                   }
                }
             break;
@@ -525,7 +531,12 @@ int main(int argc, char **argv) {
       printf("   no pixel size found, assuming 1 mm\n");
       }
    printf("   voxel size (mm): %f, color resolution (bits): %d\n",voxel_size,color_resolution);
+   printf("   intensity min: %d max: %d\n",imin,imax);
    printf("   number of images: %d, image width %d, image height %d\n",image_count,image_width,image_height);
+   //
+   // set threshold
+   //
+   threshold = imin + threshold*(imax-imin);
    //
    // add empty border
    //
@@ -562,8 +573,6 @@ int main(int argc, char **argv) {
    v.mesh->first = v.mesh->triangle;
    v.mesh->last = v.mesh->triangle;
    v.mesh->triangle->previous = v.mesh->triangle->next = 0;
-   imin = 10000;
-   imax = 0;
    do {
       DGifGetRecordType(GIFfile,&GIFtype);
       switch (GIFtype) {
@@ -585,8 +594,6 @@ int main(int argc, char **argv) {
                for (x = 0; x < (image_width-2); ++x) {
                   lower_array[y+1][x+1] = upper_array[y+1][x+1];
                   upper_array[y+1][x+1] = GIFline[x];
-                  if (upper_array[y+1][x+1] < imin) imin = upper_array[y+1][x+1];
-                  if (upper_array[y+1][x+1] > imax) imax = upper_array[y+1][x+1];
                   }
                }
             if (p == 0) {
@@ -702,7 +709,6 @@ int main(int argc, char **argv) {
          }
       }
    printf("\n");
-   printf("   min: %d max: %d\n",imin,imax);
    //
    // write STL
    //

@@ -15,7 +15,7 @@
 
 #include "fab.h"
 
-fab_find_time(struct fab_vars *v, float units, float move, float height, float jog, float plunge, float *time, int *segments, int *points) {
+void fab_find_time(struct fab_vars *v, float units, float move, float height, float jog, float plunge, float *time, int *segments, int *points) {
    float xscale, yscale, zscale;
    float xoffset, yoffset, zoffset;
    float xold, yold, zold, xnew, ynew, znew;

@@ -34,8 +34,8 @@ int main(int argc, char **argv) {
    double **image_array;
    double f,fmin,fmax;
    int x,y,z,h,i,j,k,n,p;
-   int image_width,image_height,image_count,color_resolution,GIFcode,ret;
-   float pixel_size,arg,rx,ry,rz;
+   int imin,imax,image_width,image_height,image_count,color_resolution,GIFcode,ret;
+   float pixel_size,arg,threshold,rx,ry,rz;
    char type,comment[256];
    struct fab_vars v;
    init_vars(&v);
@@ -47,7 +47,9 @@ int main(int argc, char **argv) {
       printf("   in.gif = input gif file\n");
       printf("   out.png = output PNG file\n");
       printf("   type = 'z' of density, 'h' for height (default z)\n");
-      printf("   arg = gamma for 'z', threshold for 'h' (default 1)\n");
+      printf("   arg = type argument\n");
+      printf("      'z': gamma (default 1)\n");
+      printf("      'h': threshold (0 = min, 1 = max, default 0.5)\n");
       printf("   points = points to interpolate per point (linear, default 0)\n");
       printf("   size = voxel size (mm, default from file))\n");
       printf("   to be implemented: rx,ry,rz = x,y,z rotation angles (degrees; default 0)\n");
@@ -55,7 +57,6 @@ int main(int argc, char **argv) {
       }
    type = 'z';
    p = 0;
-   arg = 1;
    rx = ry = rz = 0;
    pixel_size = -1;
    image_width = -1;
@@ -66,9 +67,11 @@ int main(int argc, char **argv) {
          printf("gif_png: oops -- type must be 'z' or 'h'\n");
          exit(-1);
          }
+      }
+   if (type == 'z') arg = 1.0;
+   else if (type == 'h') arg = 0.5;
    if (argc >= 5)
       sscanf(argv[4],"%f",&arg);
-      }
    if (argc >= 6)
       sscanf(argv[5],"%d",&p);
    if (argc >= 7)
@@ -82,6 +85,8 @@ int main(int argc, char **argv) {
    // scan the file 
    //
    printf("read %s\n",argv[1]);
+   imin = 256;
+   imax = 0;
    color_resolution = -1;
    GIFfile = DGifOpenFileName(argv[1]);
    if (GIFfile == NULL) {
@@ -103,6 +108,10 @@ int main(int argc, char **argv) {
                if (ret != GIF_OK) {
                   printf("gif_png: oops -- error reading line\n");
                   exit(-1);
+                  }
+               for (x = 0; x < GIFfile->SWidth; ++x) {
+                  if (GIFline[x] < imin) imin = GIFline[x];
+                  if (GIFline[x] > imax) imax = GIFline[x];
                   }
                }
             break;
@@ -139,7 +148,13 @@ int main(int argc, char **argv) {
       printf("   no pixel size found, assuming 1 mm\n");
       }
    printf("   pixel size (mm): %f, color resolution (bits): %d\n",pixel_size,color_resolution);
+   printf("   intensity min: %d max: %d\n",imin,imax);
    printf("   number of images: %d, image width %d, image height %d\n",image_count,image_width,image_height);
+   //
+   // set threshold
+   //
+   if (type == 'h')
+      threshold = imin + arg*(imax-imin);
    //
    // check and set limits
    //
@@ -227,29 +242,47 @@ int main(int argc, char **argv) {
                      upper_array[y][x] = GIFline[x];
                      }
                   }
-               //
-               // interpolate layer image
-               //
-               for (x = 0; x < (image_width-1); ++x) {
-                  for (y = 0; y < (image_height-1); ++y) {
-                     for (i = 0; i <= p; ++i) {
-                        for (j = 0; j <= p; ++j) {
-                           for (k = 0; k <= p; ++k) {
-                              f = lower_array[y][x]*((p+1.0-i)/(p+1.0))*((p+1.0-j)/(p+1.0))*((p+1.0-k)/(p+1.0))
-                                + lower_array[y][x+1]*((i)/(p+1.0))*((p+1.0-j)/(p+1.0))*((p+1.0-k)/(p+1.0))
-                                + lower_array[y+1][x]*((p+1.0-i)/(p+1.0))*((j)/(p+1.0))*((p+1.0-k)/(p+1.0))
-                                + lower_array[y+1][x+1]*((i)/(p+1.0))*((j)/(p+1.0))*((p+1.0-k)/(p+1.0))
-                                + upper_array[y][x]*((p+1.0-i)/(p+1.0))*((p+1.0-j)/(p+1.0))*((k)/(p+1.0))
-                                + upper_array[y][x+1]*((i)/(p+1.0))*((p+1.0-j)/(p+1.0))*((k)/(p+1.0))
-                                + upper_array[y+1][x]*((p+1.0-i)/(p+1.0))*((j)/(p+1.0))*((k)/(p+1.0))
-                                + upper_array[y+1][x+1]*((i)/(p+1.0))*((j)/(p+1.0))*((k)/(p+1.0));
-                              if (type == 'z') {
-                                 image_array[(1+p)*y+j][(1+p)*x+i] += f;
-                                 }
-                              else if (type == 'h') {
-                                 h = (1+p)*z+k;
-                                 if ((f > arg) && (h > image_array[(1+p)*y+j][(1+p)*x+i]))
-                                    image_array[(1+p)*y+j][(1+p)*x+i] = h;
+               if (p == 0) {
+                  //
+                  // no interpolation, loop over layer voxels
+                  //
+                  for (x = 0; x < (image_width-1); ++x) {
+                     for (y = 0; y < (image_height-1); ++y) {
+                        if (type == 'z') {
+                           image_array[y][x] += lower_array[y][x];
+                           }
+                        else if (type == 'h') {
+                           if ((lower_array[y][x] >= threshold) && (upper_array[y][x] < threshold))
+                              image_array[y][x] = z + (lower_array[y][x]-threshold)/(lower_array[y][x]-upper_array[y][x]);
+                           }
+                        }
+                     }
+                  }
+               else {
+                  //
+                  // yes interpolation, loop over layer sub-voxels
+                  //
+                  for (x = 0; x < (image_width-1); ++x) {
+                     for (y = 0; y < (image_height-1); ++y) {
+                        for (i = 0; i <= p; ++i) {
+                           for (j = 0; j <= p; ++j) {
+                              for (k = 0; k <= p; ++k) {
+                                 f = lower_array[y][x]*((p+1.0-i)/(p+1.0))*((p+1.0-j)/(p+1.0))*((p+1.0-k)/(p+1.0))
+                                   + lower_array[y][x+1]*((i)/(p+1.0))*((p+1.0-j)/(p+1.0))*((p+1.0-k)/(p+1.0))
+                                   + lower_array[y+1][x]*((p+1.0-i)/(p+1.0))*((j)/(p+1.0))*((p+1.0-k)/(p+1.0))
+                                   + lower_array[y+1][x+1]*((i)/(p+1.0))*((j)/(p+1.0))*((p+1.0-k)/(p+1.0))
+                                   + upper_array[y][x]*((p+1.0-i)/(p+1.0))*((p+1.0-j)/(p+1.0))*((k)/(p+1.0))
+                                   + upper_array[y][x+1]*((i)/(p+1.0))*((p+1.0-j)/(p+1.0))*((k)/(p+1.0))
+                                   + upper_array[y+1][x]*((p+1.0-i)/(p+1.0))*((j)/(p+1.0))*((k)/(p+1.0))
+                                   + upper_array[y+1][x+1]*((i)/(p+1.0))*((j)/(p+1.0))*((k)/(p+1.0));
+                                 if (type == 'z') {
+                                    image_array[(1+p)*y+j][(1+p)*x+i] += f;
+                                    }
+                                 else if (type == 'h') {
+                                    h = (1+p)*z+k;
+                                    if ((f > threshold) && (h > image_array[(1+p)*y+j][(1+p)*x+i]))
+                                       image_array[(1+p)*y+j][(1+p)*x+i] = h;
+                                    }
                                  }
                               }
                            }

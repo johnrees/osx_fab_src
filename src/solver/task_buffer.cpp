@@ -4,7 +4,7 @@
 #include <iostream>
 using namespace std;
 
-typedef boost::lock_guard<boost::mutex> lock_guard;
+typedef boost::lock_guard<boost::mutex> locker;
 
 Task::Task()
     : tree(NULL)
@@ -61,7 +61,7 @@ bool TaskBuffer::add(Region region, MathTree* tree)
     
     {   // Check to see if a thread is available for this
         // new unassigned task.
-        lock_guard lock(master_mutex);
+        locker lock(master_mutex);
         if (unassigned_tasks >= size - active_threads)
             return false;
         unassigned_tasks++;
@@ -70,7 +70,7 @@ bool TaskBuffer::add(Region region, MathTree* tree)
 
     unsigned pos;
     {   // Figure out which task slot we're about to fill
-        lock_guard lock(add_mutex);
+        locker lock(add_mutex);
         pos = add_position;
         
         // Increment the add position in the buffer
@@ -78,7 +78,7 @@ bool TaskBuffer::add(Region region, MathTree* tree)
     }
     
     {   // Fill the task slot
-        lock_guard lock(tasks[pos].mutex);
+        locker lock(tasks[pos].mutex);
         if (tree)
             tasks[pos].task = Task(region, tree->clone());
         else
@@ -98,7 +98,7 @@ bool TaskBuffer::add(Region region, MathTree* tree)
 void TaskBuffer::hello()
 {
     {
-        lock_guard lock(master_mutex);
+        locker lock(master_mutex);
         active_threads++;
     }
     barrier.wait();
@@ -111,13 +111,13 @@ Task TaskBuffer::next()
 {
     unsigned pos;
     {   // Figure out the slot from which we'll read
-        lock_guard lock(read_mutex);
+        locker lock(read_mutex);
         pos = read_position;
         read_position = (read_position + 1) % size;
     }
     
     {   // Mark that this thread is inactive
-        lock_guard lock(master_mutex);
+        locker lock(master_mutex);
         active_threads--;
         
         // If all threads are inactive and there are no unassigned
@@ -137,7 +137,7 @@ Task TaskBuffer::next()
     }
     
     {   // Note that this thread is now active.
-        lock_guard lock(master_mutex);
+        locker lock(master_mutex);
         unassigned_tasks--;
         active_threads++;
     }
@@ -150,7 +150,7 @@ Task TaskBuffer::next()
 void TaskBuffer::finish()
 {
     for (unsigned i = 0; i < size; ++i) {
-        lock_guard lock(tasks[i].mutex);
+        locker lock(tasks[i].mutex);
         tasks[i].task = Task();
         tasks[i].ready = true;
         tasks[i].condition.notify_one();

@@ -3,6 +3,7 @@
 <pre>
 commands:
    bin/vol_gif
+   bin/gif_png
    bin/gif_stl
    bin/stl_info
    bin/stl_png
@@ -122,10 +123,21 @@ command line: vol_gif in.vol out.gif nx ny nz [format [type [arg [size [dx dy dz
    x0,y0,z0 = x,y,z output voxel origin (default 0)
    to be implemented: rx,ry,rz = view rotation angles (degrees; default 0)
 
+command line: gif_png in.gif out.png [type [arg [points [size [rx ry rz]]]]]
+   in.gif = input gif file
+   out.png = output PNG file
+   type = 'z' of density, 'h' for height (default z)
+   arg = type argument
+      'z': gamma (default 1)
+      'h': threshold (0 = min, 1 = max, default 0.5)
+   points = points to interpolate per point (linear, default 0)
+   size = voxel size (mm, default from file))
+   to be implemented: rx,ry,rz = x,y,z rotation angles (degrees; default 0)
+
 command line: gif_stl in.gif out.stl [threshold [size [points [angle]]]]
    in.gif = input GIF section file
    out.stl = output STL file
-   threshold: surface threshold (0-255, default 128))
+   threshold: surface intensity threshold (0 = min, 1 = max, default 0.5))
    size = voxel size (mm, default from file))
    points = points to interpolate per point (default 0)
    to be implemented: angle = minimum relative face angle to decimate vertices (default 0)
